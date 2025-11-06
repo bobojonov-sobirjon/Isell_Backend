@@ -12,9 +12,10 @@ except ImportError:
     load_dotenv = None
 
 API_KEY = os.getenv('ISell_API_KEY')
+print(f"[CATEGORY_LIST] API_KEY: {API_KEY}")
 
 DOC_ID = os.getenv('ISell_DOC_ID')
-
+print(f"[CATEGORY_LIST] DOC_ID: {DOC_ID}")
 Isell_PRODUCT_CATEGORIES = os.getenv('ISell_PRODUCT_CATEGORIES')
 
 

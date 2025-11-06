@@ -14,16 +14,19 @@ except ImportError:
     load_dotenv = None
 
 API_KEY = os.getenv('ISell_API_KEY')
-
+print(f"[PRODUCT_LISTS] API_KEY: {API_KEY}")
 DOC_ID = os.getenv('ISell_DOC_ID')
+print(f"[PRODUCT_LISTS] DOC_ID: {DOC_ID}")
 
 ISell_PRODUCT_VARIATIONS_TABLE_NAME = os.getenv('ISell_PRODUCT_VARIATIONS')
 Isell_PRODUCT_PRICE = os.getenv('ISell_PRODUCT_PRICE')
+print(f"[PRODUCT_LISTS] Isell_PRODUCT_PRICE: {Isell_PRODUCT_PRICE}")
 
 ISell_PROPERTY = os.getenv('ISell_PROPERTY')
 ISell_PROPERTY_VALUE = os.getenv('ISell_PROPERTY_VALUE')
 ISell_PRODUCT_PROPERTY_VALUE = os.getenv('ISell_PRODUCT_PROPERTY_VALUE')
 
+print(ISell_PROPERTY, ISell_PROPERTY_VALUE, ISell_PRODUCT_PROPERTY_VALUE)
 
 def get_url(table_name):
     return f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{table_name}/records"
