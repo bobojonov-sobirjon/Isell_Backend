@@ -1,17 +1,25 @@
 import requests
 import os
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from django.core.files.base import ContentFile
 from django.db import transaction
 
 from apps.v1.products.models import Categories, Products, ProductIDs, ProductDetails, ProductProperties, ProductCharacteristics, ProductImages
 
+# BASE_DIR ni aniqlash (project root)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # .env faylga to'liq yo'l bilan yuklash
+    env_path = BASE_DIR / '.env'
+    load_dotenv(dotenv_path=env_path)
+    print(f"[PRODUCT_LISTS] Loading .env from: {env_path}")
 except ImportError:
     load_dotenv = None
+except Exception as e:
+    print(f"[PRODUCT_LISTS] WARNING: Could not load .env file: {str(e)}")
 
 API_KEY = os.getenv('ISell_API_KEY')
 print(f"[PRODUCT_LISTS] API_KEY: {API_KEY}")

@@ -1,15 +1,23 @@
 import requests
 import json
 import os
+from pathlib import Path
 
 from apps.v1.order.models import Tariffs
 
+# BASE_DIR ni aniqlash (project root)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # .env faylga to'liq yo'l bilan yuklash
+    env_path = BASE_DIR / '.env'
+    load_dotenv(dotenv_path=env_path)
+    print(f"[ORDER_LIST] Loading .env from: {env_path}")
 except ImportError:
     load_dotenv = None
+except Exception as e:
+    print(f"[ORDER_LIST] WARNING: Could not load .env file: {str(e)}")
 
 API_KEY = os.getenv('ISell_API_KEY')
 

@@ -1,15 +1,23 @@
 import requests
 import json
 import os
+from pathlib import Path
 
 from apps.v1.products.models import Categories
 
+# BASE_DIR ni aniqlash (project root)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # .env faylga to'liq yo'l bilan yuklash
+    env_path = BASE_DIR / '.env'
+    load_dotenv(dotenv_path=env_path)
+    print(f"[CATEGORY_LIST] Loading .env from: {env_path}")
 except ImportError:
     load_dotenv = None
+except Exception as e:
+    print(f"[CATEGORY_LIST] WARNING: Could not load .env file: {str(e)}")
 
 API_KEY = os.getenv('ISell_API_KEY')
 print(f"[CATEGORY_LIST] API_KEY: {API_KEY}")
@@ -17,6 +25,7 @@ print(f"[CATEGORY_LIST] API_KEY: {API_KEY}")
 DOC_ID = os.getenv('ISell_DOC_ID')
 print(f"[CATEGORY_LIST] DOC_ID: {DOC_ID}")
 Isell_PRODUCT_CATEGORIES = os.getenv('ISell_PRODUCT_CATEGORIES')
+print(f"[CATEGORY_LIST] Isell_PRODUCT_CATEGORIES: {Isell_PRODUCT_CATEGORIES}")
 
 
 def get_url(table_name):
