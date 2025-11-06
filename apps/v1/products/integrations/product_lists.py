@@ -317,27 +317,35 @@ def save_product_details(variations_by_product):
 
 
 def get_products():
+    print("[PRODUCT_LISTS] Starting products import...")
     try:
         url = get_url(Isell_PRODUCT_PRICE)
+        print(f"[PRODUCT_LISTS] API URL: {url}")
         response = requests.get(url, headers=headers)
+        print(f"[PRODUCT_LISTS] API Response Status: {response.status_code}")
         
         if response.status_code != 200:
+            print(f"[PRODUCT_LISTS] ERROR: API returned status {response.status_code}")
             return {
                 "success": False,
                 "message": f"API Error: {response.status_code}"
             }
         
         actual_products = get_all_actual_true_products(response.json())
+        print(f"[PRODUCT_LISTS] Total actual products found: {len(actual_products)}")
         
         if not actual_products:
+            print("[PRODUCT_LISTS] WARNING: No actual products found")
             return {
                 "success": False,
                 "message": "Актуальные продукты не найдены"
             }
         
         grouped_products = process_products(actual_products)
+        print(f"[PRODUCT_LISTS] Products grouped into {len(grouped_products)} unique products")
         
         created_count, skipped_count, product_ids_saved = save_products_to_db(grouped_products)
+        print(f"[PRODUCT_LISTS] Import completed! Created: {created_count}, Skipped: {skipped_count}, Product IDs saved: {product_ids_saved}")
         
         return {
             "success": True,
@@ -349,6 +357,7 @@ def get_products():
         }
         
     except Exception as e:
+        print(f"[PRODUCT_LISTS] ERROR: {str(e)}")
         return {
             "success": False,
             "message": f"Error: {str(e)}"
@@ -356,18 +365,23 @@ def get_products():
 
 
 def import_product_details():
+    print("[PRODUCT_LISTS] Starting product details import...")
     try:
         variations = get_product_variations()
+        print(f"[PRODUCT_LISTS] Total variations retrieved: {len(variations) if variations else 0}")
         
         if not variations:
+            print("[PRODUCT_LISTS] WARNING: No variations found")
             return {
                 "success": False,
                 "message": "Вариации не найдены"
             }
         
         variations_by_product = process_variations_by_product(variations)
+        print(f"[PRODUCT_LISTS] Variations grouped by {len(variations_by_product)} products")
         
         details_created, details_skipped = save_product_details(variations_by_product)
+        print(f"[PRODUCT_LISTS] Details import completed! Created: {details_created}, Skipped: {details_skipped}")
         
         return {
             "success": True,
@@ -378,6 +392,7 @@ def import_product_details():
         }
         
     except Exception as e:
+        print(f"[PRODUCT_LISTS] ERROR in import_product_details: {str(e)}")
         return {
             "success": False,
             "message": f"Error: {str(e)}"
@@ -435,16 +450,20 @@ def save_product_properties(properties_data):
 
 def import_product_properties():
     """Product properties import qilish"""
+    print("[PRODUCT_LISTS] Starting product properties import...")
     try:
         properties = get_product_properties_from_grist()
+        print(f"[PRODUCT_LISTS] Total properties retrieved: {len(properties) if properties else 0}")
         
         if not properties:
+            print("[PRODUCT_LISTS] WARNING: No properties found")
             return {
                 "success": False,
                 "message": "Свойства продуктов не найдены"
             }
         
         created_count, updated_count = save_product_properties(properties)
+        print(f"[PRODUCT_LISTS] Properties import completed! Created: {created_count}, Updated: {updated_count}")
         
         return {
             "success": True,
@@ -455,6 +474,7 @@ def import_product_properties():
         }
         
     except Exception as e:
+        print(f"[PRODUCT_LISTS] ERROR in import_product_properties: {str(e)}")
         return {
             "success": False,
             "message": f"Error: {str(e)}"
@@ -598,11 +618,14 @@ def save_product_characteristics(characteristics_data):
 
 def import_product_characteristics():
     """Product characteristics import qilish"""
+    print("[PRODUCT_LISTS] Starting product characteristics import...")
     try:
         # Product property values olish
         product_property_values = get_product_property_values_from_grist()
+        print(f"[PRODUCT_LISTS] Product property values retrieved: {len(product_property_values) if product_property_values else 0}")
         
         if not product_property_values:
+            print("[PRODUCT_LISTS] WARNING: No product property values found")
             return {
                 "success": False,
                 "message": "Product property values не найдены"
@@ -610,8 +633,10 @@ def import_product_characteristics():
         
         # Property values olish
         property_values = get_property_values_from_grist()
+        print(f"[PRODUCT_LISTS] Property values retrieved: {len(property_values) if property_values else 0}")
         
         if not property_values:
+            print("[PRODUCT_LISTS] WARNING: No property values found")
             return {
                 "success": False,
                 "message": "Property values не найдены"
@@ -622,8 +647,10 @@ def import_product_characteristics():
             product_property_values, 
             property_values
         )
+        print(f"[PRODUCT_LISTS] Processed characteristics data: {len(characteristics_data)}")
         
         if not characteristics_data:
+            print("[PRODUCT_LISTS] WARNING: Failed to process characteristics data")
             return {
                 "success": False,
                 "message": "Не удалось обработать данные характеристик"
@@ -631,6 +658,7 @@ def import_product_characteristics():
         
         # Saqlash
         created_count, skipped_count = save_product_characteristics(characteristics_data)
+        print(f"[PRODUCT_LISTS] Characteristics import completed! Created: {created_count}, Skipped: {skipped_count}")
         
         return {
             "success": True,
@@ -643,6 +671,7 @@ def import_product_characteristics():
         }
         
     except Exception as e:
+        print(f"[PRODUCT_LISTS] ERROR in import_product_characteristics: {str(e)}")
         return {
             "success": False,
             "message": f"Error: {str(e)}"
@@ -756,11 +785,14 @@ def save_images_bulk(products_pictures, downloaded_images):
 
 def import_product_images():
     """Product rasmlarini import qilish (tez va samarali)"""
+    print("[PRODUCT_LISTS] Starting product images import...")
     try:
         # Variations olish (ID bilan)
         variations = get_product_variations_for_images()
+        print(f"[PRODUCT_LISTS] Variations for images retrieved: {len(variations) if variations else 0}")
         
         if not variations:
+            print("[PRODUCT_LISTS] WARNING: No variations found for images")
             return {
                 "success": False,
                 "message": "Вариации не найдены"
@@ -768,8 +800,10 @@ def import_product_images():
         
         # Picture ID larini olish va guruhlash
         products_pictures = extract_picture_ids_from_variations(variations)
+        print(f"[PRODUCT_LISTS] Products with pictures: {len(products_pictures)}")
         
         if not products_pictures:
+            print("[PRODUCT_LISTS] WARNING: No images found in variations")
             return {
                 "success": False,
                 "message": "Изображения не найдены в вариациях"
@@ -779,8 +813,10 @@ def import_product_images():
         all_attachment_ids = set()
         for data in products_pictures.values():
             all_attachment_ids.update(data["attachment_ids"])
+        print(f"[PRODUCT_LISTS] Total unique attachment IDs: {len(all_attachment_ids)}")
         
         # Rasmlarni parallel yuklab olish (10 ta bir vaqtda)
+        print("[PRODUCT_LISTS] Downloading images in parallel (10 workers)...")
         downloaded_images = []
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_id = {
@@ -788,19 +824,28 @@ def import_product_images():
                 for att_id in all_attachment_ids
             }
             
+            completed = 0
             for future in as_completed(future_to_id):
                 result = future.result()
                 if result and result["success"]:
                     downloaded_images.append(result)
+                completed += 1
+                if completed % 10 == 0:
+                    print(f"[PRODUCT_LISTS] Downloaded {completed}/{len(all_attachment_ids)} images...")
+        
+        print(f"[PRODUCT_LISTS] Total images downloaded: {len(downloaded_images)}")
         
         if not downloaded_images:
+            print("[PRODUCT_LISTS] ERROR: Failed to download any images")
             return {
                 "success": False,
                 "message": "Не удалось загрузить изображения"
             }
         
         # Rasmlarni saqlash
+        print("[PRODUCT_LISTS] Saving images to database...")
         created_count, skipped_count = save_images_bulk(products_pictures, downloaded_images)
+        print(f"[PRODUCT_LISTS] Images import completed! Created: {created_count}, Skipped: {skipped_count}")
         
         return {
             "success": True,
@@ -812,6 +857,7 @@ def import_product_images():
         }
         
     except Exception as e:
+        print(f"[PRODUCT_LISTS] ERROR in import_product_images: {str(e)}")
         return {
             "success": False,
             "message": f"Error: {str(e)}"

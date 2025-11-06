@@ -32,18 +32,23 @@ def get_tariffs():
     ISell API dan tariflarni olib kelib bazaga saqlaydi
     Response format: [{id: 1, fields: {name: "...", ...}}]
     """
+    print("[ORDER_LIST] Starting tariffs import...")
     url = get_url(Isell_TARIFFS)
+    print(f"[ORDER_LIST] API URL: {url}")
     
     try:
         response = requests.get(url, headers=headers)
+        print(f"[ORDER_LIST] API Response Status: {response.status_code}")
         response.raise_for_status()
         
         data = response.json()
         
         if not isinstance(data, dict) or 'records' not in data:
+            print("[ORDER_LIST] ERROR: Invalid response format")
             return {"error": "Invalid response format"}
         
         records = data.get('records', [])
+        print(f"[ORDER_LIST] Total records received: {len(records)}")
         
         created_count = 0
         updated_count = 0
@@ -58,6 +63,8 @@ def get_tariffs():
             offset = fields.get('offset', 0)
             tariff_type = fields.get('type', '')
             coefficient = fields.get('coefficient', 1.0)
+            
+            print(f"[ORDER_LIST] Processing tariff: {name} (ID: {grist_id})")
             
             # Tariff yaratish yoki yangilash
             tariff, created = Tariffs.objects.update_or_create(
@@ -74,9 +81,12 @@ def get_tariffs():
             
             if created:
                 created_count += 1
+                print(f"[ORDER_LIST] ✓ Created new tariff: {name}")
             else:
                 updated_count += 1
+                print(f"[ORDER_LIST] - Updated existing tariff: {name}")
         
+        print(f"[ORDER_LIST] Import completed! Created: {created_count}, Updated: {updated_count}, Total: {len(records)}")
         return {
             "success": True,
             "message": "Tariffs imported successfully",
@@ -86,11 +96,13 @@ def get_tariffs():
         }
         
     except requests.RequestException as e:
+        print(f"[ORDER_LIST] ERROR: API request failed - {str(e)}")
         return {
             "success": False,
             "error": f"API request failed: {str(e)}"
         }
     except Exception as e:
+        print(f"[ORDER_LIST] ERROR: Import failed - {str(e)}")
         return {
             "success": False,
             "error": f"Import failed: {str(e)}"

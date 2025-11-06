@@ -36,33 +36,41 @@ def get_advanced_payment_assessment():
     """
     Advanced payment assessment ma'lumotlarini Grist'dan olib ProductCategory modeliga saqlash
     """
+    print("[ADVANCED_PAYMENT] Starting advanced payment assessment import...")
     try:
         # Environment variables check
         if not Isell_RISK_CATEGORIES:
+            print("[ADVANCED_PAYMENT] ERROR: Environment variable 'Isell_RISK_CATEGORIES' is not set")
             return {
                 "success": False,
                 "message": "Environment variable 'Isell_RISK_CATEGORIES' is not set"
             }
         if not Isell_PRICE_CATEGORIES:
+            print("[ADVANCED_PAYMENT] ERROR: Environment variable 'Isell_PRICE_CATEGORIES' is not set")
             return {
                 "success": False,
                 "message": "Environment variable 'Isell_PRICE_CATEGORIES' is not set"
             }
         if not Isell_ADVANCED_PAYMENT_ASSESSMENT:
+            print("[ADVANCED_PAYMENT] ERROR: Environment variable 'Isell_ADVANCED_PAYMENT_ASSESSMENT' is not set")
             return {
                 "success": False,
                 "message": "Environment variable 'Isell_ADVANCED_PAYMENT_ASSESSMENT' is not set"
             }
         
         # 1. Risk categories ni olish
+        print("[ADVANCED_PAYMENT] Fetching risk categories...")
         risk_categories_url = get_url(Isell_RISK_CATEGORIES)
+        print(f"[ADVANCED_PAYMENT] Risk categories URL: {risk_categories_url}")
         risk_response = requests.get(risk_categories_url, headers=headers)
+        print(f"[ADVANCED_PAYMENT] Risk categories API Status: {risk_response.status_code}")
         
         if risk_response.status_code != 200:
             try:
                 error_detail = risk_response.json()
             except:
                 error_detail = risk_response.text
+            print(f"[ADVANCED_PAYMENT] ERROR: Risk categories API failed - {error_detail}")
             return {
                 "success": False,
                 "message": f"Risk categories API Error: {risk_response.status_code}",
@@ -78,12 +86,17 @@ def get_advanced_payment_assessment():
             category_name = record.get("fields", {}).get("category")
             if record_id and category_name:
                 risk_categories_map[record_id] = category_name
+        print(f"[ADVANCED_PAYMENT] Risk categories mapped: {len(risk_categories_map)}")
         
         # 2. Product categories ni olish
+        print("[ADVANCED_PAYMENT] Fetching product categories...")
         product_categories_url = get_url(Isell_PRICE_CATEGORIES)
+        print(f"[ADVANCED_PAYMENT] Product categories URL: {product_categories_url}")
         product_response = requests.get(product_categories_url, headers=headers)
+        print(f"[ADVANCED_PAYMENT] Product categories API Status: {product_response.status_code}")
         
         if product_response.status_code != 200:
+            print(f"[ADVANCED_PAYMENT] ERROR: Product categories API failed - Status {product_response.status_code}")
             return {
                 "success": False,
                 "message": f"Product categories API Error: {product_response.status_code}"
@@ -96,16 +109,24 @@ def get_advanced_payment_assessment():
             category_name = record.get("fields", {}).get("category")
             if record_id and category_name:
                 product_categories_map[record_id] = category_name
+        print(f"[ADVANCED_PAYMENT] Product categories mapped: {len(product_categories_map)}")
         
         # 3. Advanced payment assessment ni olish
+        print("[ADVANCED_PAYMENT] Fetching advanced payment assessment...")
         assessment_url = get_url(Isell_ADVANCED_PAYMENT_ASSESSMENT)
+        print(f"[ADVANCED_PAYMENT] Assessment URL: {assessment_url}")
         assessment_response = requests.get(assessment_url, headers=headers)
+        print(f"[ADVANCED_PAYMENT] Assessment API Status: {assessment_response.status_code}")
         
         if assessment_response.status_code != 200:
+            print(f"[ADVANCED_PAYMENT] ERROR: Assessment API failed - Status {assessment_response.status_code}")
             return {
                 "success": False,
                 "message": f"Advanced payment assessment API Error: {assessment_response.status_code}"
             }
+        
+        assessment_records = assessment_response.json().get("records", [])
+        print(f"[ADVANCED_PAYMENT] Total assessment records: {len(assessment_records)}")
         
         # 4. ProductCategory modeliga ma'lumotlarni saqlash
         created_count = 0
@@ -113,7 +134,7 @@ def get_advanced_payment_assessment():
         skipped_count = 0
         skipped_details = []
         
-        for record in assessment_response.json().get("records", []):
+        for record in assessment_records:
             assessment_id = record.get("id")
             fields = record.get("fields", {})
             risk_category_id = fields.get("risk_category")
@@ -133,6 +154,7 @@ def get_advanced_payment_assessment():
                     "price_category_id": price_category_id,
                     "price_category_name": price_category_name
                 })
+                print(f"[ADVANCED_PAYMENT] ⚠ Skipped record {assessment_id}: Missing category mapping")
                 continue
             
             try:
@@ -150,13 +172,17 @@ def get_advanced_payment_assessment():
                 
                 if created:
                     created_count += 1
+                    print(f"[ADVANCED_PAYMENT] ✓ Created: {price_category_name} - {risk_category_name} ({percentage}%)")
                 else:
                     updated_count += 1
+                    print(f"[ADVANCED_PAYMENT] - Updated: {price_category_name} - {risk_category_name} ({percentage}%)")
                     
             except Exception as e:
                 skipped_count += 1
+                print(f"[ADVANCED_PAYMENT] ⚠ Error processing record {assessment_id}: {str(e)}")
                 continue
         
+        print(f"[ADVANCED_PAYMENT] Import completed! Created: {created_count}, Updated: {updated_count}, Skipped: {skipped_count}")
         return {
             "success": True,
             "message": "Advanced payment assessment импортирован успешно",
@@ -172,6 +198,7 @@ def get_advanced_payment_assessment():
         }
         
     except Exception as e:
+        print(f"[ADVANCED_PAYMENT] ERROR: {str(e)}")
         return {
             "success": False,
             "message": f"Error: {str(e)}"
