@@ -23,6 +23,21 @@ try:
     print(f"[CATEGORY_LIST] .env file exists: {env_path.exists()}")
     
     if env_path.exists():
+        # .env faylni to'g'ridan-to'g'ri o'qish va tekshirish
+        try:
+            with open(env_path, 'r', encoding='utf-8') as f:
+                env_content = f.read()
+                if 'ISell_PRODUCT_CATEGORIES' in env_content:
+                    print(f"[CATEGORY_LIST] ✓ Found ISell_PRODUCT_CATEGORIES in .env file")
+                    # Qatorni topish
+                    for line in env_content.split('\n'):
+                        if 'ISell_PRODUCT_CATEGORIES' in line and not line.strip().startswith('#'):
+                            print(f"[CATEGORY_LIST] Line: {line.strip()}")
+                else:
+                    print(f"[CATEGORY_LIST] ⚠ ISell_PRODUCT_CATEGORIES not found in .env file")
+        except Exception as e:
+            print(f"[CATEGORY_LIST] WARNING: Could not read .env file: {str(e)}")
+        
         load_dotenv(dotenv_path=env_path, override=True)
         print(f"[CATEGORY_LIST] ✓ .env file loaded successfully")
     else:
@@ -35,13 +50,23 @@ except ImportError:
 except Exception as e:
     print(f"[CATEGORY_LIST] WARNING: Could not load .env file: {str(e)}")
 
+# Environment variablelarni olish
 API_KEY = os.getenv('ISell_API_KEY')
 print(f"[CATEGORY_LIST] API_KEY: {API_KEY}")
 
 DOC_ID = os.getenv('ISell_DOC_ID')
 print(f"[CATEGORY_LIST] DOC_ID: {DOC_ID}")
-Isell_PRODUCT_CATEGORIES = os.getenv('ISell_PRODUCT_CATEGORIES')
-print(f"[CATEGORY_LIST] Isell_PRODUCT_CATEGORIES: {Isell_PRODUCT_CATEGORIES}")
+
+# ISell_PRODUCT_CATEGORIES ni olish - bir necha variantni tekshirish
+Isell_PRODUCT_CATEGORIES = os.getenv('ISell_PRODUCT_CATEGORIES') or os.getenv('Isell_PRODUCT_CATEGORIES')
+print(f"[CATEGORY_LIST] ISell_PRODUCT_CATEGORIES (from env): {os.getenv('ISell_PRODUCT_CATEGORIES')}")
+print(f"[CATEGORY_LIST] Isell_PRODUCT_CATEGORIES (from env): {os.getenv('Isell_PRODUCT_CATEGORIES')}")
+print(f"[CATEGORY_LIST] Isell_PRODUCT_CATEGORIES (final): {Isell_PRODUCT_CATEGORIES}")
+
+# Agar hali ham None bo'lsa, barcha environment variablelarni ko'rsatish
+if not Isell_PRODUCT_CATEGORIES:
+    print(f"[CATEGORY_LIST] WARNING: ISell_PRODUCT_CATEGORIES is None!")
+    print(f"[CATEGORY_LIST] All env vars with 'CATEGOR': {[k for k in os.environ.keys() if 'CATEGOR' in k.upper()]}")
 
 
 def get_url(table_name):
