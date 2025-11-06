@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.models import Group
 from django.contrib.sites.models import Site
 from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 from .models import CustomUser, SmsCode, EskizToken
@@ -11,6 +12,11 @@ except admin.sites.NotRegistered:
 
 try:
     admin.site.unregister(BlacklistedToken)
+except admin.sites.NotRegistered:
+    pass
+
+try:
+    admin.site.unregister(Group)
 except admin.sites.NotRegistered:
     pass
 
@@ -28,7 +34,7 @@ class CustomUserAdmin(UserAdmin):
         (None, {'fields': ('phone_number', 'password')}),
         ('Личная информация', {'fields': ('first_name', 'last_name', 'date_of_birth', 'avatar', 'address')}),
         ('Адрес', {'fields': ('city', 'street', 'house', 'apartment', 'postal_index')}),
-        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
+        ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
     )
     
