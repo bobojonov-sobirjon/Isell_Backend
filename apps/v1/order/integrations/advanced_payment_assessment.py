@@ -5,17 +5,33 @@ from pathlib import Path
 
 from apps.v1.products.models import ProductCategory
 
-# BASE_DIR ni aniqlash (project root)
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
+# Django settings dan BASE_DIR ni olish
+try:
+    from django.conf import settings
+    BASE_DIR = settings.BASE_DIR
+    print(f"[ADVANCED_PAYMENT] Using BASE_DIR from Django settings: {BASE_DIR}")
+except:
+    # Agar Django settings yuklanmagan bo'lsa, o'zimiz aniqlaymiz
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
+    print(f"[ADVANCED_PAYMENT] Using calculated BASE_DIR: {BASE_DIR}")
 
 try:
     from dotenv import load_dotenv
     # .env faylga to'liq yo'l bilan yuklash
     env_path = BASE_DIR / '.env'
-    load_dotenv(dotenv_path=env_path)
-    print(f"[ADVANCED_PAYMENT] Loading .env from: {env_path}")
+    print(f"[ADVANCED_PAYMENT] Attempting to load .env from: {env_path}")
+    print(f"[ADVANCED_PAYMENT] .env file exists: {env_path.exists()}")
+    
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path, override=True)
+        print(f"[ADVANCED_PAYMENT] ✓ .env file loaded successfully")
+    else:
+        # Agar .env fayl topilmasa, joriy directorydan qidiramiz
+        load_dotenv(override=True)
+        print(f"[ADVANCED_PAYMENT] ⚠ .env file not found at {env_path}, trying current directory")
 except ImportError:
     load_dotenv = None
+    print(f"[ADVANCED_PAYMENT] WARNING: python-dotenv not installed")
 except Exception as e:
     print(f"[ADVANCED_PAYMENT] WARNING: Could not load .env file: {str(e)}")
 
