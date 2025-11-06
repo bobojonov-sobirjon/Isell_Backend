@@ -176,3 +176,17 @@ SITE_ID = 1
 # Eskiz SMS Configuration
 ESKIZ_EMAIL = os.getenv('ESKIZ_EMAIL', 'info.isell.uz@gmail.com')
 ESKIZ_PASSWORD = os.getenv('ESKIZ_PASSWORD', 'UWZMdzaSGbK7Q0lutLoIMpZJbYRYy9TqiiqnvUhM')
+
+print(ESKIZ_EMAIL, ESKIZ_PASSWORD)
+print(os.getenv('ISell_API_KEY'))
+print(os.getenv('ISell_DOC_ID'))
+print(os.getenv('ISell_PRODUCT_VARIATIONS'))
+print(os.getenv('ISell_PRODUCT_PRICE'))
+print(os.getenv('ISell_PROPERTY'))
+print(os.getenv('ISell_PROPERTY_VALUE'))
+print(os.getenv('ISell_PRODUCT_PROPERTY_VALUE'))
+print(os.getenv('ISell_PRODUCT_CATEGORIES'))
+print(os.getenv('ISell_TARIFFS'))
+print(os.getenv('ISell_ADVANCED_PAYMENT_ASSESSMENT'))
+print(os.getenv('ISell_RISK_CATEGORY'))
+print(os.getenv('ISell_PRICE_CATEGORY'))
