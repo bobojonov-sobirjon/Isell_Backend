@@ -70,8 +70,8 @@ class EskizTokenAdmin(admin.ModelAdmin):
     is_expired.boolean = True
     is_expired.short_description = 'Истек'
 
-admin.site.site_header = "SafeCode CRM Admin"
-admin.site.site_title = "SafeCode CRM Admin"
-admin.site.index_title = "Welcome to SafeCode CRM Admin"
+admin.site.site_header = "ISell Uzbekistan CRM Admin"
+admin.site.site_title = "ISell Uzbekistan CRM Admin"
+admin.site.index_title = "Welcome to ISell Uzbekistan CRM Admin"
 
 admin.site.unregister(Site)
