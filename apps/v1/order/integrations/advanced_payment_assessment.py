@@ -9,50 +9,30 @@ from apps.v1.products.models import ProductCategory
 try:
     from django.conf import settings
     BASE_DIR = settings.BASE_DIR
-    print(f"[ADVANCED_PAYMENT] Using BASE_DIR from Django settings: {BASE_DIR}")
 except:
-    # Agar Django settings yuklanmagan bo'lsa, o'zimiz aniqlaymiz
     BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
-    print(f"[ADVANCED_PAYMENT] Using calculated BASE_DIR: {BASE_DIR}")
 
 try:
     from dotenv import load_dotenv
-    # .env faylga to'liq yo'l bilan yuklash
     env_path = BASE_DIR / '.env'
-    print(f"[ADVANCED_PAYMENT] Attempting to load .env from: {env_path}")
-    print(f"[ADVANCED_PAYMENT] .env file exists: {env_path.exists()}")
-    
     if env_path.exists():
         load_dotenv(dotenv_path=env_path, override=True)
-        print(f"[ADVANCED_PAYMENT] ✓ .env file loaded successfully")
     else:
-        # Agar .env fayl topilmasa, joriy directorydan qidiramiz
         load_dotenv(override=True)
-        print(f"[ADVANCED_PAYMENT] ⚠ .env file not found at {env_path}, trying current directory")
 except ImportError:
     load_dotenv = None
-    print(f"[ADVANCED_PAYMENT] WARNING: python-dotenv not installed")
-except Exception as e:
-    print(f"[ADVANCED_PAYMENT] WARNING: Could not load .env file: {str(e)}")
+except Exception:
+    pass
 
 API_KEY = os.getenv('ISell_API_KEY')
-
-print(f"[ADVANCED_PAYMENT] API_KEY: {API_KEY}")
-
 DOC_ID = os.getenv('ISell_DOC_ID')
-print(f"[ADVANCED_PAYMENT] DOC_ID: {DOC_ID}")
 
 Isell_ADVANCED_PAYMENT_ASSESSMENT = os.getenv('ISell_PRODUCT_ADVANCED_PAYMENT_ASSESSMENT')
-print(f"[ADVANCED_PAYMENT] Isell_ADVANCED_PAYMENT_ASSESSMENT: {Isell_ADVANCED_PAYMENT_ASSESSMENT}")
 Isell_RISK_CATEGORIES = os.getenv('ISell_RISK_CATEGORY')
-print(f"[ADVANCED_PAYMENT] Isell_RISK_CATEGORIES: {Isell_RISK_CATEGORIES}")
 Isell_PRICE_CATEGORIES = os.getenv('ISell_PRICE_CATEGORY')
-print(f"[ADVANCED_PAYMENT] Isell_PRICE_CATEGORIES: {Isell_PRICE_CATEGORIES}")
 
 ISell_APPLICATION = os.getenv('ISell_APPLICATION')
-print(f"[ADVANCED_PAYMENT] ISell_APPLICATION: {ISell_APPLICATION}")
 ISell_PRODUCTS = os.getenv('ISell_PRODUCTS')
-print(f"[ADVANCED_PAYMENT] ISell_PRODUCTS: {ISell_PRODUCTS}")
 
 
 def get_url(table_name):

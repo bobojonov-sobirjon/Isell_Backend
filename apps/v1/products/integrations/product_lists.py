@@ -11,46 +11,30 @@ from apps.v1.products.models import Categories, Products, ProductIDs, ProductDet
 try:
     from django.conf import settings
     BASE_DIR = settings.BASE_DIR
-    print(f"[PRODUCT_LISTS] Using BASE_DIR from Django settings: {BASE_DIR}")
 except:
-    # Agar Django settings yuklanmagan bo'lsa, o'zimiz aniqlaymiz
     BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
-    print(f"[PRODUCT_LISTS] Using calculated BASE_DIR: {BASE_DIR}")
 
 try:
     from dotenv import load_dotenv
-    # .env faylga to'liq yo'l bilan yuklash
     env_path = BASE_DIR / '.env'
-    print(f"[PRODUCT_LISTS] Attempting to load .env from: {env_path}")
-    print(f"[PRODUCT_LISTS] .env file exists: {env_path.exists()}")
-    
     if env_path.exists():
         load_dotenv(dotenv_path=env_path, override=True)
-        print(f"[PRODUCT_LISTS] ✓ .env file loaded successfully")
     else:
-        # Agar .env fayl topilmasa, joriy directorydan qidiramiz
         load_dotenv(override=True)
-        print(f"[PRODUCT_LISTS] ⚠ .env file not found at {env_path}, trying current directory")
 except ImportError:
     load_dotenv = None
-    print(f"[PRODUCT_LISTS] WARNING: python-dotenv not installed")
-except Exception as e:
-    print(f"[PRODUCT_LISTS] WARNING: Could not load .env file: {str(e)}")
+except Exception:
+    pass
 
 API_KEY = os.getenv('ISell_API_KEY')
-print(f"[PRODUCT_LISTS] API_KEY: {API_KEY}")
 DOC_ID = os.getenv('ISell_DOC_ID')
-print(f"[PRODUCT_LISTS] DOC_ID: {DOC_ID}")
 
 ISell_PRODUCT_VARIATIONS_TABLE_NAME = os.getenv('ISell_PRODUCT_VARIATIONS')
 Isell_PRODUCT_PRICE = os.getenv('ISell_PRODUCT_PRICE')
-print(f"[PRODUCT_LISTS] Isell_PRODUCT_PRICE: {Isell_PRODUCT_PRICE}")
 
 ISell_PROPERTY = os.getenv('ISell_PROPERTY')
 ISell_PROPERTY_VALUE = os.getenv('ISell_PROPERTY_VALUE')
 ISell_PRODUCT_PROPERTY_VALUE = os.getenv('ISell_PRODUCT_PROPERTY_VALUE')
-
-print(ISell_PROPERTY, ISell_PROPERTY_VALUE, ISell_PRODUCT_PROPERTY_VALUE)
 
 def get_url(table_name):
     return f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{table_name}/records"

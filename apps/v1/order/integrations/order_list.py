@@ -9,36 +9,23 @@ from apps.v1.order.models import Tariffs
 try:
     from django.conf import settings
     BASE_DIR = settings.BASE_DIR
-    print(f"[ORDER_LIST] Using BASE_DIR from Django settings: {BASE_DIR}")
 except:
-    # Agar Django settings yuklanmagan bo'lsa, o'zimiz aniqlaymiz
     BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
-    print(f"[ORDER_LIST] Using calculated BASE_DIR: {BASE_DIR}")
 
 try:
     from dotenv import load_dotenv
-    # .env faylga to'liq yo'l bilan yuklash
     env_path = BASE_DIR / '.env'
-    print(f"[ORDER_LIST] Attempting to load .env from: {env_path}")
-    print(f"[ORDER_LIST] .env file exists: {env_path.exists()}")
-    
     if env_path.exists():
         load_dotenv(dotenv_path=env_path, override=True)
-        print(f"[ORDER_LIST] ✓ .env file loaded successfully")
     else:
-        # Agar .env fayl topilmasa, joriy directorydan qidiramiz
         load_dotenv(override=True)
-        print(f"[ORDER_LIST] ⚠ .env file not found at {env_path}, trying current directory")
 except ImportError:
     load_dotenv = None
-    print(f"[ORDER_LIST] WARNING: python-dotenv not installed")
-except Exception as e:
-    print(f"[ORDER_LIST] WARNING: Could not load .env file: {str(e)}")
+except Exception:
+    pass
 
 API_KEY = os.getenv('ISell_API_KEY')
-
 DOC_ID = os.getenv('ISell_DOC_ID')
-
 Isell_TARIFFS = os.getenv('ISell_TARIFFS')
 
 
