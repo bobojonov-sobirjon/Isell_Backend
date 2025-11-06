@@ -40,35 +40,6 @@ class CustomUserAdmin(UserAdmin):
     )
     
     readonly_fields = ('created_at', 'updated_at', 'date_joined', 'last_login', 'reset_token', 'reset_token_expires')
-    
-@admin.register(SmsCode)
-class SmsCodeAdmin(admin.ModelAdmin):
-    list_display = ('user', 'code', 'created_at', 'expires_at', 'is_used', 'is_expired')
-    list_filter = ('is_used', 'created_at')
-    search_fields = ('user__phone_number', 'code')
-    ordering = ('-created_at',)
-    readonly_fields = ('created_at',)
-    
-    def is_expired(self, obj):
-        return obj.is_expired()
-    is_expired.boolean = True
-    is_expired.short_description = 'Истек'
-
-
-@admin.register(EskizToken)
-class EskizTokenAdmin(admin.ModelAdmin):
-    list_display = ('token_preview', 'created_at', 'expires_at', 'is_expired')
-    ordering = ('-created_at',)
-    readonly_fields = ('created_at',)
-    
-    def token_preview(self, obj):
-        return f"{obj.token[:20]}..." if len(obj.token) > 20 else obj.token
-    token_preview.short_description = 'Token'
-    
-    def is_expired(self, obj):
-        return obj.is_expired()
-    is_expired.boolean = True
-    is_expired.short_description = 'Истек'
 
 admin.site.site_header = "ISell Uzbekistan CRM Admin"
 admin.site.site_title = "ISell Uzbekistan CRM Admin"
