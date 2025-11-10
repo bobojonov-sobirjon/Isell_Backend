@@ -69,6 +69,7 @@ class ProductListView(APIView):
                     type=openapi.TYPE_OBJECT,
                     properties={
                         "count": openapi.Schema(type=openapi.TYPE_INTEGER, description="Общее количество продуктов"),
+						"total_pages": openapi.Schema(type=openapi.TYPE_INTEGER, description="Общее количество страниц"),
                         "next": openapi.Schema(type=openapi.TYPE_STRING, description="Ссылка на следующую страницу"),
                         "previous": openapi.Schema(type=openapi.TYPE_STRING, description="Ссылка на предыдущую страницу"),
                         "results": openapi.Schema(
@@ -118,7 +119,9 @@ class ProductListView(APIView):
         
         serializer = ProductsSerializer(paginated_queryset, many=True, context={'request': request})
         
-        return paginator.get_paginated_response(serializer.data)
+        response = paginator.get_paginated_response(serializer.data)
+        response.data['total_pages'] = paginator.page.paginator.num_pages
+        return response
         
 
 class ProductDetailView(APIView):

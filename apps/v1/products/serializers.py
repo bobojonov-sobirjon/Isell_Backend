@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.v1.products.models import Categories, Products, ProductDetails, ProductIDs, ProductImages, ProductCharacteristics, ProductProperties
+from apps.v1.products.models import Categories, Products, ProductDetails, ProductIDs, ProductImages, ProductCharacteristics, ProductProperties, Banner
 
 
 class CategoriesSerializer(serializers.ModelSerializer):
@@ -74,16 +74,16 @@ class ProductsSerializer(serializers.ModelSerializer):
         ]
         
     def get_details(self, obj):
-        return ProductDetailsSerializer(obj.details.all(), many=True).data
+        return ProductDetailsSerializer(obj.details.all(), many=True, context=self.context).data
     
     def get_images(self, obj):
-        return ProductImagesSerializer(obj.images.all(), many=True).data
+        return ProductImagesSerializer(obj.images.all(), many=True, context=self.context).data
     
     def get_category(self, obj):
         return CategoriesSerializer(obj.category).data
     
     def get_characteristics(self, obj):
-        return ProductCharacteristicsSerializer(obj.characteristics.all(), many=True).data
+        return ProductCharacteristicsSerializer(obj.characteristics.all(), many=True, context=self.context).data
 
 
 class CharacteristicsDetailSerializer(serializers.Serializer):
@@ -112,3 +112,18 @@ class ProductDetailFilterSerializer(serializers.Serializer):
     storage_list = serializers.ListField()
     sim_card_list = serializers.ListField()
     characteristics = CharacteristicsGroupSerializer(many=True)
+    
+
+class BannerSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Banner
+        fields = [
+            'id',
+            'name',
+            'description',
+            'link',
+            'image',
+            'is_active',
+            'order'
+        ]
