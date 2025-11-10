@@ -130,3 +130,21 @@ class ProductCharacteristics(models.Model):
     class Meta:
         verbose_name = "07. Характеристики продукта"
         verbose_name_plural = "07. Характеристики продукта"
+        
+
+class Banner(models.Model):
+    name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название баннера")
+    description = models.TextField(null=True, blank=True, verbose_name="Описание баннера")
+    link = models.URLField(null=True, blank=True, verbose_name="Ссылка на баннер")
+    image = models.ImageField(upload_to="banners/", null=True, blank=True, verbose_name="Изображение")
+    is_active = models.BooleanField(default=True, verbose_name="Активный")
+    order = models.IntegerField(default=0, verbose_name="Порядок")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
+    
+    def __str__(self):
+        return self.name or "Неизвестный баннер"
+    
+    class Meta:
+        verbose_name = "08. Баннер"
+        verbose_name_plural = "08. Баннеры"
