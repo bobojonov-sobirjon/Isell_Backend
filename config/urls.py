@@ -11,6 +11,9 @@ from drf_yasg import generators
 from rest_framework import permissions
 from config.libraries.swagger_auth import SwaggerTokenView
 
+from apps.v1.products.views.banner_views import BannerListView
+from apps.v1.order.views import CompanyAddressListView
+
 
 class CustomOpenAPISchemaGenerator(generators.OpenAPISchemaGenerator):
     """Custom schema generator that adds security definitions"""
@@ -63,6 +66,12 @@ urlpatterns += [
     path('api/v1/products/', include('apps.v1.products.urls')),
     path('api/v1/accounts/', include('apps.v1.accounts.urls')),
     path('api/v1/order/', include('apps.v1.order.urls')),
+]
+
+urlpatterns += [
+    path('api/v1/info/banners/', BannerListView.as_view(), name='banners'),
+    path('api/v1/info/company-addresses/', CompanyAddressListView.as_view(), name='company_addresses'),
+    
 ]
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

@@ -2,7 +2,7 @@ from django.urls import path
 from apps.v1.products.views.import_views import ImportProductsView, ImportCategoriesView, ImportCharacteristicsView, ImportAdvancedPaymentAssessmentView, ImportProductImagesView
 from apps.v1.products.views.category_views import CategoryListView
 from apps.v1.products.views.product_views import ProductListView, ProductDetailView, ProductDetailFilterView, CalculateMonthlyPaymentView, CalculatePaymentScheduleView
-from apps.v1.products.views.banner_views import BannerListView
+
 
 urlpatterns = [
     
@@ -38,7 +38,4 @@ urlpatterns = [
     
     # Расчет графика платежей
     path('calculate-schedule/', CalculatePaymentScheduleView.as_view(), name='calculate-payment-schedule'),
-
-    # Список баннеров
-    path('banners/', BannerListView.as_view(), name='banners'),
 ]

@@ -47,8 +47,8 @@ class CustomUserAdmin(UserAdmin):
     
     readonly_fields = ('created_at', 'updated_at', 'date_joined', 'last_login', 'reset_token', 'reset_token_expires')
 
-admin.site.site_header = "ISell Uzbekistan CRM Admin"
-admin.site.site_title = "ISell Uzbekistan CRM Admin"
-admin.site.index_title = "Welcome to ISell Uzbekistan CRM Admin"
+admin.site.site_header = "iSell Uzbekistan Admin"
+admin.site.site_title = "iSell Uzbekistan Admin"
+admin.site.index_title = "Добро пожаловать в iSell Uzbekistan Admin"
 
 admin.site.unregister(Site)

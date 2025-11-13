@@ -47,4 +47,3 @@ class UserSerializer(serializers.ModelSerializer):
             'city', 'street', 'house', 'apartment', 'postal_index'
         ]
         read_only_fields = ['id']
-

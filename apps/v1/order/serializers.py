@@ -49,11 +49,9 @@ class CompanyAddressSerializer(serializers.ModelSerializer):
             'name',
             'address',
             'latitude',
-            'longitude',
-            'created_at',
-            'updated_at'
+            'longitude'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id']
 
 
 class OrdersSerializer(serializers.ModelSerializer):
