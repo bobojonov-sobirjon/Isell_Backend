@@ -52,6 +52,7 @@ THIRD_PARTY_APPS = [
     'corsheaders',
     'django_filters',
     'import_export',
+    'django_celery_beat',
     *LOCAL_APPS,
 ]
 
@@ -187,3 +188,12 @@ MYID_CLIENT_ID = os.getenv('MYID_CLIENT_ID')
 MYID_CLIENT_SECRET = os.getenv('MYID_CLIENT_SECRET')
 MYID_CLIENT_HASH_ID = os.getenv('MYID_CLIENT_HASH_ID')
 MYID_CLIENT_HASH = os.getenv('MYID_CLIENT_HASH')
+
+# Celery Configuration
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'

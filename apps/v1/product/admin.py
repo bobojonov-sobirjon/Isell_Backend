@@ -148,10 +148,48 @@ class ProductIDsAdmin(admin.ModelAdmin):
 
 @admin.register(ProductAutomaticallyImportedTime)
 class ProductAutomaticallyImportedTimeAdmin(admin.ModelAdmin):
-    list_display = ('time',)
+    list_display = ('time', 'time_type', 'is_active', 'created_at', 'updated_at')
     search_fields = ('time',)
-    list_filter = ('time',)
+    list_filter = ('time_type', 'is_active', 'created_at')
     ordering = ["created_at"]
+    
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        try:
+            from django_celery_beat.models import PeriodicTask, IntervalSchedule
+            from apps.v1.product.tasks import import_products_task
+            import logging
+            
+            logger = logging.getLogger(__name__)
+            
+            try:
+                task_name = 'Автоматический импорт продуктов'
+                
+                PeriodicTask.objects.filter(name=task_name).delete()
+                
+                if obj.is_active and obj.time:
+                    interval_minutes = obj.get_interval_minutes()
+                    
+                    schedule, created = IntervalSchedule.objects.get_or_create(
+                        every=interval_minutes,
+                        period=IntervalSchedule.MINUTES,
+                    )
+                    
+                    PeriodicTask.objects.create(
+                        interval=schedule,
+                        name=task_name,
+                        task='apps.v1.product.tasks.import_products_task',
+                        enabled=True,
+                    )
+                    
+                    time_type_str = 'минут' if obj.time_type == 'minutes' else 'часов'
+                    logger.info(f'Автоматический импорт продуктов обновлен: каждые {obj.time} {time_type_str} ({interval_minutes} минут)')
+                else:
+                    logger.info('Автоматический импорт остановлен')
+            except Exception as e:
+                logger.error(f'Ошибка при обновлении расписания: {str(e)}', exc_info=True)
+        except ImportError:
+            pass
     
     
 @admin.register(Banner)

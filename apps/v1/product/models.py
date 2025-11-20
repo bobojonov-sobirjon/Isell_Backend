@@ -141,12 +141,30 @@ class ProductCharacteristics(models.Model):
     
 
 class ProductAutomaticallyImportedTime(models.Model):
+    TIME_TYPE_CHOICES = [
+        ('minutes', 'Минуты'),
+        ('hours', 'Часы'),
+    ]
+    
     time = models.IntegerField(null=True, blank=True, verbose_name="Время автоматического импорта")
+    time_type = models.CharField(max_length=10, choices=TIME_TYPE_CHOICES, default='minutes', verbose_name="Тип времени")
+    is_active = models.BooleanField(default=True, verbose_name="Активен")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
+    def get_interval_minutes(self):
+        """Возвращает интервал в минутах"""
+        if not self.time:
+            return None
+        if self.time_type == 'hours':
+            return self.time * 60
+        return self.time
+    
     def __str__(self):
-        return self.time or "Неизвестное время автоматического импорта"
+        if self.time:
+            time_type_str = 'минут' if self.time_type == 'minutes' else 'часов'
+            return f"{self.time} {time_type_str}"
+        return "Неизвестное время автоматического импорта"
     
     class Meta:
         db_table = 'product_product_automatically_imported_time'
