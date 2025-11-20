@@ -63,7 +63,7 @@ urlpatterns += [
 ]
 
 urlpatterns += [
-    path('api/v1/products/', include('apps.v1.products.urls')),
+    path('api/v1/product/', include('apps.v1.product.urls')),
     path('api/v1/accounts/', include('apps.v1.accounts.urls')),
     path('api/v1/order/', include('apps.v1.order.urls')),
 ]

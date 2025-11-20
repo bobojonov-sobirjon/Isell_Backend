@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from apps.v1.products.models import Categories
+from apps.v1.product.models import Categories
 
 try:
     from django.conf import settings

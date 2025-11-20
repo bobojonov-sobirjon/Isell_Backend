@@ -19,6 +19,13 @@ class CustomUser(AbstractUser):
         verbose_name="Дата рождения",
         help_text="Необязательно. Введите вашу дату рождения."
     )
+    pnfl = models.CharField(
+        max_length=14,
+        blank=True,
+        null=True,
+        verbose_name="PNFL",
+        help_text="Необязательно. Введите ваш PNFL."
+    )
     avatar = models.ImageField(
         upload_to='avatars/',
         blank=True,
@@ -38,6 +45,20 @@ class CustomUser(AbstractUser):
         null=True,
         verbose_name="Город",
         help_text="Необязательно. Введите ваш город."
+    )
+    country = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Страна",
+        help_text="Необязательно. Введите вашу страну."
+    )
+    region = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Регион",
+        help_text="Необязательно. Введите ваш регион."
     )
     street = models.CharField(
         max_length=255,
@@ -66,6 +87,11 @@ class CustomUser(AbstractUser):
         null=True,
         verbose_name="Индекс",
         help_text="Необязательно. Введите почтовый индекс."
+    )
+    is_veriifed_my_id = models.BooleanField(
+        default=False,
+        verbose_name="Подтвержден ли мой ID",
+        help_text="Необязательно. Введите ваш мой ID."
     )
     created_at = models.DateTimeField(
         auto_now_add=True,

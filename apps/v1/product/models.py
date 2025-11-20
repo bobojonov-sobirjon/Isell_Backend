@@ -3,7 +3,6 @@ from django.db import models
 
 class Categories(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название категории")
-    description = models.TextField(null=True, blank=True, verbose_name="Описание категории")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
@@ -11,11 +10,12 @@ class Categories(models.Model):
         return self.name or "Неизвестная категория"
 
     class Meta:
+        db_table = 'product_categories'
         verbose_name = "01. Категория"
         verbose_name_plural = "01. Категории"
 
 
-class ProductCategory(models.Model):
+class ProductRiskCategory(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название оценки авансового платежа")
     risk_category = models.CharField(max_length=255, null=True, blank=True, verbose_name="Рисковая категория")
     percentage = models.FloatField(null=True, blank=True, verbose_name="Процент")
@@ -29,19 +29,18 @@ class ProductCategory(models.Model):
         return self.name or "Неизвестная оценка авансового платежа"
     
     class Meta:
+        db_table = 'product_risk_categories'
         verbose_name = "02.  Оценка авансового платежа"
         verbose_name_plural = "02. Оценка авансового платежа"
-        
+
 
 class Products(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название продукта")
     category = models.ForeignKey(Categories, on_delete=models.CASCADE, related_name="products", verbose_name="Категория")
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Цена")
-    battery_capacity = models.CharField(max_length=255, null=True, blank=True, verbose_name="Емкость аккумулятора")
+    price_category = models.CharField(max_length=255, null=True, blank=True, verbose_name="Категория цены")
     actual = models.BooleanField(default=True, verbose_name="Актуальный")
-    processor = models.CharField(max_length=255, null=True, blank=True, verbose_name="Процессор")
-    screen_name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название экрана")
-    grist_product_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID продукта в ГРИСТ")
+    image = models.ImageField(upload_to="products/", null=True, blank=True, verbose_name="Изображение")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
@@ -49,12 +48,14 @@ class Products(models.Model):
         return self.name or "Неизвестный продукт"
     
     class Meta:
+        db_table = 'product_products'
         verbose_name = "03. Продукт"
         verbose_name_plural = "03. Продукты"
-        
+
 
 class ProductIDs(models.Model):
     product = models.ForeignKey(Products, on_delete=models.CASCADE, related_name="ids", verbose_name="Продукт")
+    grist_product_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID продукта в ГРИСТ")
     variation_name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название вариации")
     variation_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID вариации")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
@@ -64,31 +65,18 @@ class ProductIDs(models.Model):
         return self.variation_name or "Неизвестная вариация"
     
     class Meta:
+        db_table = 'product_product_ids'
         verbose_name = "09. Вариация продукта"
         verbose_name_plural = "09. Вариации продукта"
-
-
-class ProductImages(models.Model):
-    product = models.ForeignKey(Products, on_delete=models.CASCADE, related_name="images", verbose_name="Продукт")
-    image = models.ImageField(upload_to="products/", null=True, blank=True, verbose_name="Изображение")
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
-    updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
-    
-    def __str__(self):
-        if self.image:
-            return f"{self.product.name} - {self.image.name}"
-        return f"{self.product.name} - Без изображения"
-    
-    class Meta:
-        verbose_name = "04. Изображение продукта"
-        verbose_name_plural = "04. Изображения продукта"
 
 
 class ProductDetails(models.Model):
     product = models.ForeignKey(Products, on_delete=models.CASCADE, related_name="details", verbose_name="Продукт")
     color = models.CharField(max_length=255, null=True, blank=True, verbose_name="Цвет")
     storage = models.CharField(max_length=255, null=True, blank=True, verbose_name="Память")
-    sim_card = models.CharField(max_length=255, null=True, blank=True, verbose_name="SIM-карта")
+    sim = models.CharField(max_length=255, null=True, blank=True, verbose_name="SIM-карта")
+    battery_capacity = models.CharField(max_length=255, null=True, blank=True, verbose_name="Емкость аккумулятора")
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Цена")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
@@ -96,54 +84,71 @@ class ProductDetails(models.Model):
         return f"{self.product.name} - {self.color} {self.storage}" if self.product else "Неизвестный продукт"
     
     class Meta:
+        db_table = 'product_product_details'
         verbose_name = "05. Детали продукта"
         verbose_name_plural = "05. Детали продукта"
-        unique_together = [['product', 'color', 'storage', 'sim_card']]
+        unique_together = [['product', 'color', 'storage', 'sim']]
+        
+
+class ProductImages(models.Model):
+    product_details = models.ForeignKey(ProductDetails, on_delete=models.CASCADE, related_name="images", verbose_name="Детали продукта")
+    image = models.ImageField(upload_to="products/", null=True, blank=True, verbose_name="Изображение")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
+    
+    def __str__(self):
+        if self.image:
+            return f"{self.product_details.product.name} - {self.image.name}"
+        return f"{self.product_details.product.name} - Без изображения"
+    
+    class Meta:
+        db_table = 'product_product_images'
+        verbose_name = "04. Изображение детали продукта"
+        verbose_name_plural = "04. Изображения детали продукта"
 
 
 class ProductProperties(models.Model):
-    name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название свойства")
-    type = models.CharField(max_length=255, null=True, blank=True, verbose_name="Тип свойства")
+    property_name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название свойства")
+    property_type = models.CharField(max_length=255, null=True, blank=True, verbose_name="Тип свойства")
     grist_property_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID свойства в ГРИСТ")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
     def __str__(self):
-        return self.name or "Неизвестное свойство"
+        return self.property_name or "Неизвестное свойство"
     
     class Meta:
+        db_table = 'product_product_properties'
         verbose_name = "06. Свойства продукта"
         verbose_name_plural = "06. Свойства продукта"
 
 
 class ProductCharacteristics(models.Model):
     product = models.ForeignKey(Products, on_delete=models.CASCADE, related_name="characteristics", verbose_name="Продукт")
+    product_ids = models.ForeignKey(ProductIDs, on_delete=models.CASCADE, related_name="characteristics", verbose_name="Вариация продукта", null=True, blank=True)
     property = models.ForeignKey(ProductProperties, on_delete=models.CASCADE, related_name="characteristics", verbose_name="Свойство")
-    value = models.TextField(null=True, blank=True, verbose_name="Значение свойства")
+    value_name = models.TextField(null=True, blank=True, verbose_name="Значение свойства")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
     def __str__(self):
-        return self.property.name or "Неизвестное свойство"
+        return self.property.property_name or "Неизвестное свойство"
     
     class Meta:
-        verbose_name = "07. Характеристики продукта"
+        db_table = 'product_product_characteristics'
+        verbose_name = "07. Характеристика продукта"
         verbose_name_plural = "07. Характеристики продукта"
-        
+    
 
-class Banner(models.Model):
-    name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название баннера")
-    description = models.TextField(null=True, blank=True, verbose_name="Описание баннера")
-    link = models.URLField(null=True, blank=True, verbose_name="Ссылка на баннер")
-    image = models.ImageField(upload_to="banners/", null=True, blank=True, verbose_name="Изображение")
-    is_active = models.BooleanField(default=True, verbose_name="Активный")
-    order = models.IntegerField(default=0, verbose_name="Порядок")
+class ProductAutomaticallyImportedTime(models.Model):
+    time = models.IntegerField(null=True, blank=True, verbose_name="Время автоматического импорта")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
     def __str__(self):
-        return self.name or "Неизвестный баннер"
+        return self.time or "Неизвестное время автоматического импорта"
     
     class Meta:
-        verbose_name = "08. Баннер"
-        verbose_name_plural = "08. Баннеры"
+        db_table = 'product_product_automatically_imported_time'
+        verbose_name = "08. Время автоматического импорта"
+        verbose_name_plural = "08. Время автоматического импорта"

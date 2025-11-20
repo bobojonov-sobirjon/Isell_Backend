@@ -14,9 +14,11 @@ from apps.v1.accounts.models import CustomUser, SmsCode
 from apps.v1.accounts.serializers import (
     PhoneLoginSerializer, 
     VerifySMSCodeSerializer,
-    UserSerializer
+    UserSerializer,
+    MyIDSessionSerializer
 )
 from apps.v1.accounts.services import EskizSMSService
+from apps.v1.accounts.services.myid_service import get_access_token, create_session, get_user_data
 
 
 class PhoneLoginView(APIView):
@@ -273,6 +275,17 @@ class VerifySMSCodeView(APIView):
             expires_at__lt=timezone.now()
         ).delete()
         
+        # Check if user is verified with MyID
+        if not user.is_veriifed_my_id:
+            return Response(
+                {
+                    "success": True,
+                    "message": "Код подтвержден. Требуется верификация через MyID",
+                    "data": {}
+                },
+                status=status.HTTP_200_OK
+            )
+        
         refresh = RefreshToken.for_user(user)
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
@@ -433,3 +446,395 @@ class ResendSMSCodeView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+class CreateMyIDSessionView(APIView):
+    permission_classes = [AllowAny]
+    
+    @swagger_auto_schema(
+        tags=['MyID'],
+        operation_summary="Создание сессии MyID",
+        operation_description="""
+        Создает сессию для идентификации через MyID.
+        
+        **Параметры:**
+        - phone_number: Номер телефона (опционально)
+        - birth_date: Дата рождения в формате YYYY-MM-DD (опционально)
+        - pinfl: 14-значный персональный ID (опционально)
+        - pass_data: Серия и номер паспорта в формате ABxxxxxxx (опционально)
+        
+        **Возвращает:**
+        - session_id: ID сессии для использования в SDK
+        - access_token: Токен доступа для последующих запросов
+        """,
+        request_body=MyIDSessionSerializer,
+        responses={
+            200: openapi.Response(
+                description="Сессия успешно создана",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Сессия создана",
+                        "data": {
+                            "session_id": "140a262b-d99f-4328-bf6b-ac1619cabcbd",
+                            "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+                        }
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Ошибка валидации данных",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Неверный формат данных",
+                        "errors": {}
+                    }
+                }
+            ),
+            500: openapi.Response(
+                description="Ошибка создания сессии",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Не удалось создать сессию"
+                    }
+                }
+            )
+        }
+    )
+    def post(self, request):
+        serializer = MyIDSessionSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "success": False,
+                    "message": "Неверный формат данных",
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Получаем access token
+        token_result = get_access_token()
+        if not token_result.get("success"):
+            error_msg = token_result.get("error", "Unknown error")
+            error_detail = token_result.get("error_detail")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Не удалось получить access token",
+                    "error": error_msg,
+                    "error_detail": error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        access_token = token_result["data"].get("access_token")
+        if not access_token:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Не удалось получить access token",
+                    "error": "Access token не найден в ответе API",
+                    "response_data": token_result.get("data")
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Создаем сессию
+        validated_data = serializer.validated_data
+        birth_date = validated_data.get("birth_date")
+        if birth_date:
+            birth_date = birth_date.strftime("%Y-%m-%d")
+        
+        session_result = create_session(
+            access_token=access_token,
+            phone_number=validated_data.get("phone_number"),
+            birth_date=birth_date,
+            pinfl=validated_data.get("pinfl"),
+            pass_data=validated_data.get("pass_data")
+        )
+        
+        if not session_result.get("success"):
+            return Response(
+                {
+                    "success": False,
+                    "message": "Не удалось создать сессию",
+                    "error": session_result.get("error")
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        session_id = session_result["data"].get("session_id")
+        
+        return Response(
+            {
+                "success": True,
+                "message": "Сессия создана",
+                "data": {
+                    "session_id": session_id,
+                    "access_token": access_token
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class VerifyMyIDDataView(APIView):
+    permission_classes = [AllowAny]
+    
+    @swagger_auto_schema(
+        tags=['MyID'],
+        operation_summary="Получение и верификация данных пользователя через MyID",
+        operation_description="""
+        Получает данные пользователя из MyID после завершения идентификации в SDK.
+        
+        **Параметры запроса:**
+        - code: Код полученный от SDK после идентификации (query parameter)
+        - token: Access token полученный при создании сессии (query parameter)
+        
+        **Процесс:**
+        1. Получает данные пользователя из MyID API
+        2. Обновляет данные пользователя в базе данных
+        3. Отправляет данные в Grist (таблица Counterparties)
+        4. Устанавливает is_veriifed_my_id = True
+        """,
+        manual_parameters=[
+            openapi.Parameter(
+                'code',
+                openapi.IN_QUERY,
+                description="Код полученный от SDK",
+                type=openapi.TYPE_STRING,
+                required=True
+            ),
+            openapi.Parameter(
+                'token',
+                openapi.IN_QUERY,
+                description="Access token из сессии",
+                type=openapi.TYPE_STRING,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="Данные успешно получены и обновлены",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Данные успешно обновлены",
+                        "data": {
+                            "user": {
+                                "id": 1,
+                                "phone_number": "998901234567",
+                                "first_name": "Иван",
+                                "last_name": "Иванов"
+                            }
+                        }
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Ошибка валидации",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Неверные параметры запроса"
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="Пользователь не найден",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Пользователь не найден"
+                    }
+                }
+            ),
+            500: openapi.Response(
+                description="Ошибка получения данных",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Не удалось получить данные из MyID"
+                    }
+                }
+            )
+        }
+    )
+    def get(self, request):
+        code = request.query_params.get('code')
+        access_token = request.query_params.get('token')
+        
+        if not code or not access_token:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Неверные параметры запроса. Требуются code и token"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Получаем данные пользователя из MyID
+        user_data_result = get_user_data(access_token, code)
+        
+        if not user_data_result.get("success"):
+            return Response(
+                {
+                    "success": False,
+                    "message": "Не удалось получить данные из MyID",
+                    "error": user_data_result.get("error")
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        myid_data = user_data_result.get("data", {})
+        profile = myid_data.get("data", {}).get("profile", {})
+        common_data = profile.get("common_data", {})
+        doc_data = profile.get("doc_data", {})
+        contacts = profile.get("contacts", {})
+        address_data = profile.get("address", {})
+        permanent_registration = address_data.get("permanent_registration", {})
+        
+        # Извлекаем данные
+        phone = contacts.get("phone", "")
+        first_name = common_data.get("first_name", "")
+        middle_name = common_data.get("middle_name", "")
+        last_name = common_data.get("last_name", "")
+        pinfl = common_data.get("pinfl", "")
+        birth_date_str = common_data.get("birth_date", "")
+        pass_data = doc_data.get("pass_data", "")
+        
+        # Адрес
+        address = permanent_registration.get("address", "")
+        region = permanent_registration.get("region", "")
+        country = permanent_registration.get("country", "")
+        
+        # Ищем пользователя по номеру телефона
+        try:
+            user = CustomUser.objects.get(phone_number=phone)
+        except CustomUser.DoesNotExist:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Пользователь не найден"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Обновляем данные пользователя
+        if first_name:
+            user.first_name = first_name
+        if last_name:
+            user.last_name = last_name
+        if pinfl:
+            user.pnfl = pinfl
+        if birth_date_str:
+            try:
+                from datetime import datetime
+                birth_date = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
+                user.date_of_birth = birth_date
+            except:
+                pass
+        if address:
+            user.address = address
+        if country:
+            user.country = country
+        if region:
+            user.region = region
+        
+        # Устанавливаем флаг верификации
+        user.is_veriifed_my_id = True
+        user.save()
+        
+        # Отправляем данные в Grist
+        try:
+            post_to_grist_counterparties(
+                first_name=first_name or "",
+                last_name=last_name or "",
+                middle_name=middle_name or "",
+                pinfl=pinfl or "",
+                date_of_birth=birth_date_str or "",
+                address=address or "",
+                phone=phone or "",
+                passport_series=pass_data or ""
+            )
+        except Exception as e:
+            # Логируем ошибку, но не прерываем процесс
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error posting to Grist: {str(e)}")
+        
+        user_data = UserSerializer(user).data
+        
+        return Response(
+            {
+                "success": True,
+                "message": "Данные успешно обновлены",
+                "data": {
+                    "user": user_data
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl, 
+                                  date_of_birth, address, phone, passport_series):
+    """
+    Отправка данных в Grist таблицу Counterparties
+    
+    Args:
+        first_name: Имя
+        last_name: Фамилия
+        middle_name: Отчество
+        pinfl: PINFL
+        date_of_birth: Дата рождения
+        address: Адрес
+        phone: Телефон
+        passport_series: Серия паспорта
+    """
+    import os
+    import requests
+    
+    API_KEY = os.getenv('ISell_API_KEY')
+    DOC_ID = os.getenv('ISell_DOC_ID')
+    COUNTERPARTIES_TABLE = os.getenv('ISell_COUNTERPARTIES', 'Counterparties')
+    
+    if not API_KEY or not DOC_ID:
+        return None
+    
+    url = f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{COUNTERPARTIES_TABLE}/records"
+    
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    # Формируем полное имя
+    full_name = f"{first_name} {middle_name} {last_name}".strip() if middle_name else f"{first_name} {last_name}".strip()
+    
+    payload = {
+        "records": [
+            {
+                "fields": {
+                    "name": full_name,
+                    "pinfl": pinfl,
+                    "address": address,
+                    "passport_series": passport_series,
+                    "date_of_birth": date_of_birth,
+                    "phone": phone
+                }
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        return None

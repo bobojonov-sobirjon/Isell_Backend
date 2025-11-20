@@ -6,8 +6,12 @@ from config.libraries.email import EMAIL_BACKEND, EMAIL_HOST, EMAIL_PORT, EMAIL_
 from config.libraries.swagger import SWAGGER_SETTINGS, SWAGGER_UI_OAUTH2_CONFIG
 
 import os
+import warnings
 from datetime import timedelta
 from pathlib import Path
+
+# Suppress pkg_resources deprecation warnings
+warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*', category=UserWarning)
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -38,6 +42,7 @@ LOCAL_APPS = [
     'apps.v1.accounts',
     'apps.v1.products',
     'apps.v1.order',
+    'apps.v1.product',
 ]
 
 THIRD_PARTY_APPS = [
@@ -174,21 +179,12 @@ AUTH_USER_MODEL = 'accounts.CustomUser'
 SITE_ID = 1
 
 # Eskiz SMS Configuration
-ESKIZ_EMAIL = os.getenv('ESKIZ_EMAIL', 'info.isell.uz@gmail.com')
-ESKIZ_PASSWORD = os.getenv('ESKIZ_PASSWORD', 'UWZMdzaSGbK7Q0lutLoIMpZJbYRYy9TqiiqnvUhM')
+ESKIZ_EMAIL = os.getenv('ESKIZ_EMAIL')
+ESKIZ_PASSWORD = os.getenv('ESKIZ_PASSWORD')
 
 # MY ID Configuration
-MYID_CLIENT_ID = os.getenv('MYID_CLIENT_ID', 'isell_sdk-0cnI1vDHIIqviRG8dazTki3ZdDHYS1B1iVTHiLaR')
-MYID_CLIENT_SECRET = os.getenv('MYID_CLIENT_SECRET', '9BVl7IpGc48adw3k69lScOJjKQGyGt2lNeJ88wEFQLK5m9cDf8GjGKP9oEpuj1eGLlVjX5PNirHcYEHawwoicJ5fUyHGMHZYD3K5')
-MYID_CLIENT_HASH_ID = os.getenv('MYID_CLIENT_HASH_ID', '7a727145-23da-4d42-8f3b-cdd032635a41')
-MYID_CLIENT_HASH = os.getenv('MYID_CLIENT_HASH', '''MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsFW3jedThVNXeYv6DFQ4
-3NBBf5kO0yivQrZQ/GKqz64DxhDOj6li+bfGBa9np35W09RoqLYd2r8eIRYK43lx
-YTS+dA3KJxR1R6ZaoCEEQgkc9EjbfNmmsz/TWyD+WT82F7m8fccD/dyzOF8OEFJr
-sQlX+X/7iOtcSY+2vK9zGLR+tGig0m+WWhG7DUDyzOp8HWEcBx9arzlBsyvYuP6F
-fOnR03eaLfHD8wuGC6I3W5POwtD1oSM6Xxwu+SZkkdVU6dADcL8CIP37AIV7K+JY
-VEqExBsRrrJR7vINTPl+Oof1bDqnaIIjdOZRN7FAcJgQFRfvbXf7koYfx8GuyH5V
-NwIDAQAB''')
-# MY ID Username and Password for OAuth2 authentication
-# If not provided, will use client_id and client_secret as fallback
-MYID_USERNAME = os.getenv('MYID_USERNAME', None)  # Set this if MY ID provides separate username
-MYID_PASSWORD = os.getenv('MYID_PASSWORD', None)  # Set this if MY ID provides separate password
+MYID_HOST = os.getenv('MYID_HOST')
+MYID_CLIENT_ID = os.getenv('MYID_CLIENT_ID')
+MYID_CLIENT_SECRET = os.getenv('MYID_CLIENT_SECRET')
+MYID_CLIENT_HASH_ID = os.getenv('MYID_CLIENT_HASH_ID')
+MYID_CLIENT_HASH = os.getenv('MYID_CLIENT_HASH')

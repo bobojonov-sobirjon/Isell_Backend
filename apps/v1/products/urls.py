@@ -22,19 +22,19 @@ urlpatterns = [
     path('import-images/', ImportProductImagesView.as_view(), name='import-images'),
     
     # Список категорий
-    path('categories/', CategoryListView.as_view(), name='categories'),
+    # path('categories/', CategoryListView.as_view(), name='categories'),
     
     # Список продуктов
-    path('', ProductListView.as_view(), name='products'),
+    # path('', ProductListView.as_view(), name='products'),
     
-    # Детальная информация о продукте
-    path('<int:product_id>/', ProductDetailView.as_view(), name='product-detail'),
+    # # Детальная информация о продукте
+    # path('<int:product_id>/', ProductDetailView.as_view(), name='product-detail'),
     
-    # Фильтрованные детали продукта (Cascading Filter)
-    path('<int:product_id>/filter/', ProductDetailFilterView.as_view(), name='product-detail-filter'),
+    # # Фильтрованные детали продукта (Cascading Filter)
+    # path('<int:product_id>/filter/', ProductDetailFilterView.as_view(), name='product-detail-filter'),
     
-    # Расчет ежемесячного платежа
-    path('<int:product_id>/calculate/', CalculateMonthlyPaymentView.as_view(), name='calculate-monthly-payment'),
+    # # Расчет ежемесячного платежа
+    # path('<int:product_id>/calculate/', CalculateMonthlyPaymentView.as_view(), name='calculate-monthly-payment'),
     
     # Расчет графика платежей
     path('calculate-schedule/', CalculatePaymentScheduleView.as_view(), name='calculate-payment-schedule'),

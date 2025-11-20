@@ -5,7 +5,7 @@ from apps.v1.products.models import Categories, Products, ProductDetails, Produc
 class CategoriesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Categories
-        fields = '__all__'  
+        fields = ['id', 'name']  
         
 
 class ProductDetailsSerializer(serializers.ModelSerializer):
