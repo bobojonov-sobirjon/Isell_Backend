@@ -6,6 +6,7 @@ from apps.v1.product.views import (
     CalculateMonthlyPaymentView,
     CalculatePaymentScheduleView
 )
+from apps.v1.order.views import TariffsListView
 
 urlpatterns = [
     # Список категорий (только с продуктами)
@@ -22,5 +23,8 @@ urlpatterns = [
     
     # Расчет графика платежей
     path('calculate-schedule/', CalculatePaymentScheduleView.as_view(), name='calculate-payment-schedule'),
+    
+    # Список тарифов
+    path('tariffs/', TariffsListView.as_view(), name='tariffs_list'),
 ]
 
