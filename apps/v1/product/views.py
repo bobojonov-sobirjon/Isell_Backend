@@ -16,7 +16,7 @@ from apps.v1.product.serializers import (
     CategoriesSerializer, ProductListSerializer
 )
 from apps.v1.order.models import Tariffs, Orders
-from apps.v1.products.models import ProductCategory
+from apps.v1.product.models import ProductRiskCategory
 from apps.v1.order.integrations.advanced_payment_assessment import get_application, get_products_in_grist
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -639,14 +639,14 @@ class CalculatePaymentScheduleView(APIView):
                             
                             if risk_category_id and price_category_id:
                                 try:
-                                    product_category = ProductCategory.objects.get(
+                                    product_risk_category = ProductRiskCategory.objects.get(
                                         grist_risk_category_id=str(risk_category_id),
                                         grist_price_category_id=str(price_category_id)
                                     )
                                     percentage = product_category.percentage or 0
                                     product_total = product_price * quantity
                                     minimum_contribution += product_total * percentage
-                                except ProductCategory.DoesNotExist:
+                                except ProductRiskCategory.DoesNotExist:
                                     pass
                 except Exception as e:
                     minimum_contribution = 0
@@ -929,7 +929,7 @@ class CalculatePaymentScheduleView(APIView):
         if calculation_mode == 1:
             total_products_price = original_total_product_sum
         elif calculation_mode == 2:
-            total_products_price = total_remaining_after_advance
+            total_products_price = original_total_product_sum
         else:
             total_products_price = original_total_product_sum
         

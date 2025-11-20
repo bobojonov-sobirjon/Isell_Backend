@@ -40,7 +40,6 @@ ALLOWED_HOSTS = ["*"]
 
 LOCAL_APPS = [
     'apps.v1.accounts',
-    'apps.v1.products',
     'apps.v1.order',
     'apps.v1.product',
 ]

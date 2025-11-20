@@ -1,6 +1,6 @@
 from django.db import models
 from apps.v1.accounts.models import CustomUser
-from apps.v1.products.models import Products
+from apps.v1.product.models import Products
 
 
 class Tariffs(models.Model):

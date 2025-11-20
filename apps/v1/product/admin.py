@@ -5,7 +5,7 @@ from django.conf import settings
 from apps.v1.product.models import (
     Products, ProductDetails, ProductIDs,
     ProductProperties, ProductCharacteristics, Categories, ProductImages,
-    ProductRiskCategory, ProductAutomaticallyImportedTime
+    ProductRiskCategory, ProductAutomaticallyImportedTime, Banner
     
 )
 
@@ -151,4 +151,18 @@ class ProductAutomaticallyImportedTimeAdmin(admin.ModelAdmin):
     list_display = ('time',)
     search_fields = ('time',)
     list_filter = ('time',)
+    ordering = ["created_at"]
+    
+    
+@admin.register(Banner)
+class BannerAdmin(admin.ModelAdmin):
+    def get_image(self, obj):
+        if obj.image:
+            return format_html('<img src="{}" style="max-height: 50px; max-width: 50px;" />', obj.image.url)
+        return '-'
+    get_image.short_description = 'Изображение'
+    
+    list_display = ('get_image', 'name', 'description', 'link', 'is_active', 'order')
+    search_fields = ('name', 'description', 'link')
+    list_filter = ('is_active', 'order')
     ordering = ["created_at"]

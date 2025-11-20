@@ -12,7 +12,7 @@ from django.db import transaction
 from apps.v1.order.integrations.order_list import get_tariffs
 from apps.v1.order.models import Tariffs, Orders, OrderItems, OrderPaymentSchedule, OrderCaluculationMode, CompanyAddress
 from apps.v1.order.serializers import TariffsSerializer, OrdersSerializer, CompanyAddressSerializer
-from apps.v1.products.models import Products
+from apps.v1.product.models import Products
 
 
 class ImportTariffsView(APIView):

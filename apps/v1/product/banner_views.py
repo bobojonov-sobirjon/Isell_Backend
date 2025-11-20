@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
 
-from apps.v1.products.models import Banner
-from apps.v1.products.serializers import BannerSerializer
+from apps.v1.product.models import Banner
+from apps.v1.product.serializers import BannerSerializer
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 

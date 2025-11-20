@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from apps.v1.products.models import ProductCategory
+from apps.v1.product.models import ProductRiskCategory
 
 # Django settings dan BASE_DIR ni olish
 try:

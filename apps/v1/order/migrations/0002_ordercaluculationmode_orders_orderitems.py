@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('order', '0001_initial'),
-        ('products', '0016_productcategory_products_product_category'),
+        ('product', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -50,7 +50,7 @@ class Migration(migrations.Migration):
                 ('price', models.DecimalField(blank=True, decimal_places=2, max_digits=10, null=True, verbose_name='Цена')),
                 ('created_at', models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')),
                 ('updated_at', models.DateTimeField(auto_now=True, verbose_name='Дата обновления')),
-                ('product', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='products.products', verbose_name='Продукт')),
+                ('product', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='product.products', verbose_name='Продукт')),
                 ('tariff', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='order.tariffs', verbose_name='Тариф')),
                 ('order', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='order.orders', verbose_name='Заказ')),
             ],

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from apps.v1.product.models import (
     Categories, Products, ProductDetails, ProductIDs, 
     ProductImages, ProductCharacteristics, ProductProperties,
-    ProductRiskCategory
+    ProductRiskCategory, Banner
 )
 
 
@@ -416,3 +416,18 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         
         return images
 
+
+
+class BannerSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Banner
+        fields = [
+            'id',
+            'name',
+            'description',
+            'link',
+            'image',
+            'is_active',
+            'order'
+        ]
