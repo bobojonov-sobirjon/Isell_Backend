@@ -86,7 +86,7 @@ def create_session(access_token, phone_number=None, birth_date=None, is_resident
     Returns:
         dict: Ответ от API с данными сессии или ошибка
     """
-    url = f"{settings.MYID_HOST}/api/v2/sdk/sessions"
+    url = f"{settings.MYID_HOST}/api/v1/sdk/sessions"
     
     headers = {
         "Content-Type": "application/json",
