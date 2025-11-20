@@ -52,3 +52,42 @@ admin.site.site_title = "iSell Uzbekistan Admin"
 admin.site.index_title = "Добро пожаловать в iSell Uzbekistan Admin"
 
 admin.site.unregister(Site)
+
+
+from django.contrib import admin
+
+try:
+    from django_celery_beat.models import (
+        PeriodicTask,
+        IntervalSchedule,
+        CrontabSchedule,
+        SolarSchedule,
+        ClockedSchedule,
+    )
+    
+    try:
+        admin.site.unregister(PeriodicTask)
+    except admin.sites.NotRegistered:
+        pass
+    
+    try:
+        admin.site.unregister(IntervalSchedule)
+    except admin.sites.NotRegistered:
+        pass
+    
+    try:
+        admin.site.unregister(CrontabSchedule)
+    except admin.sites.NotRegistered:
+        pass
+    
+    try:
+        admin.site.unregister(SolarSchedule)
+    except admin.sites.NotRegistered:
+        pass
+    
+    try:
+        admin.site.unregister(ClockedSchedule)
+    except admin.sites.NotRegistered:
+        pass
+except ImportError:
+    pass

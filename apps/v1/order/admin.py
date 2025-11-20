@@ -15,17 +15,6 @@ class TariffsAdmin(admin.ModelAdmin):
     list_display_links = ('name',)
     
 
-@admin.register(OrderCaluculationMode)
-class OrderCaluculationModeAdmin(admin.ModelAdmin):
-    list_display = ('name',)
-    search_fields = ('name',)
-    readonly_fields = ('created_at', 'updated_at')
-    ordering = ('-created_at',)
-    list_per_page = 20
-    list_max_show_all = 100
-    list_display_links = ('name',)
-
-
 @admin.register(CompanyAddress)
 class CompanyAddressAdmin(admin.ModelAdmin):
     list_display = ('name', 'address', 'latitude', 'longitude', 'created_at')
@@ -190,25 +179,3 @@ class OrdersAdmin(admin.ModelAdmin):
         return format_html(html)
     
     display_payment_schedule.short_description = 'График платежей по всем товарам'
-
-
-@admin.register(OrderItems)
-class OrderItemsAdmin(admin.ModelAdmin):
-    list_display = ('id', 'order', 'product', 'tariff', 'quantity', 'price', 'down_payment')
-    search_fields = ('product__name', 'order__id')
-    list_filter = ('tariff', 'created_at')
-    readonly_fields = ('created_at', 'updated_at')
-    ordering = ('-created_at',)
-    list_per_page = 20
-    inlines = [OrderPaymentScheduleInline]
-
-
-@admin.register(OrderPaymentSchedule)
-class OrderPaymentScheduleAdmin(admin.ModelAdmin):
-    list_display = ('id', 'order_item', 'month_number', 'payment_date', 'monthly_payment_amount', 'is_paid', 'paid_at')
-    search_fields = ('order_item__product__name', 'order_item__order__id')
-    list_filter = ('is_paid', 'payment_date', 'created_at')
-    readonly_fields = ('created_at', 'updated_at')
-    ordering = ('order_item', 'month_number')
-    list_per_page = 50
-    list_editable = ('is_paid',)

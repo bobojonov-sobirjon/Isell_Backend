@@ -34,8 +34,8 @@ class CompanyAddress(models.Model):
         return self.address or "Неизвестный адрес компании"
     
     class Meta:
-        verbose_name = "03. Адреса компаний"
-        verbose_name_plural = "03. Адреса компаний"
+        verbose_name = "02. Адреса компаний"
+        verbose_name_plural = "02. Адреса компаний"
 
 
 class OrderCaluculationMode(models.Model):
@@ -79,8 +79,8 @@ class Orders(models.Model):
         return self.user.username or "Неизвестный заказ"
     
     class Meta:
-        verbose_name = "02. Заказы"
-        verbose_name_plural = "02. Заказы"
+        verbose_name = "03. Заказы"
+        verbose_name_plural = "03. Заказы"
 
 
 class OrderItems(models.Model):
@@ -97,8 +97,8 @@ class OrderItems(models.Model):
         return self.product.name or "Неизвестный товар"
     
     class Meta: 
-        verbose_name = "03. Товары заказа"
-        verbose_name_plural = "03. Товары заказа"
+        verbose_name = "04. Товары заказа"
+        verbose_name_plural = "04. Товары заказа"
 
 
 class OrderPaymentSchedule(models.Model):

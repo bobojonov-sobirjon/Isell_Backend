@@ -69,7 +69,6 @@ class ProductCharacteristicsInline(admin.TabularInline):
     verbose_name = 'Характеристики продукта'
     verbose_name_plural = 'Характеристики продукта'
     fields = ['property', 'value_name']
-    autocomplete_fields = ['property']
 
 
 class ProductIDsInline(admin.TabularInline):
@@ -131,21 +130,6 @@ class ProductCharacteristicsAdmin(admin.ModelAdmin):
     get_property_name.short_description = 'Property Name'
 
 
-@admin.register(ProductRiskCategory)
-class ProductRiskCategoryAdmin(admin.ModelAdmin):
-    list_display = ('risk_category', 'name', 'percentage', 'grist_product_category_id', 'grist_risk_category_id', 'grist_price_category_id')
-    search_fields = ('name', 'risk_category', 'percentage', 'grist_product_category_id', 'grist_risk_category_id', 'grist_price_category_id')
-    list_filter = ('risk_category', 'percentage')
-    ordering = ["created_at"]
-
-
-@admin.register(ProductIDs)
-class ProductIDsAdmin(admin.ModelAdmin):
-    list_display = ('product', 'variation_name', 'variation_id')
-    search_fields = ('product__name', 'variation_name', 'variation_id')
-    list_filter = ('product',)
-    
-
 @admin.register(ProductAutomaticallyImportedTime)
 class ProductAutomaticallyImportedTimeAdmin(admin.ModelAdmin):
     list_display = ('time', 'time_type', 'is_active', 'created_at', 'updated_at')
@@ -204,3 +188,8 @@ class BannerAdmin(admin.ModelAdmin):
     search_fields = ('name', 'description', 'link')
     list_filter = ('is_active', 'order')
     ordering = ["created_at"]
+    
+
+admin.site.unregister(ProductDetails)
+admin.site.unregister(ProductProperties)
+admin.site.unregister(ProductCharacteristics)

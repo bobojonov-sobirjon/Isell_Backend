@@ -49,8 +49,8 @@ class Products(models.Model):
     
     class Meta:
         db_table = 'product_products'
-        verbose_name = "03. Продукт"
-        verbose_name_plural = "03. Продукты"
+        verbose_name = "02. Продукт"
+        verbose_name_plural = "02. Продукты"
 
 
 class ProductIDs(models.Model):
@@ -168,8 +168,8 @@ class ProductAutomaticallyImportedTime(models.Model):
     
     class Meta:
         db_table = 'product_product_automatically_imported_time'
-        verbose_name = "08. Время автоматического импорта"
-        verbose_name_plural = "08. Время автоматического импорта"
+        verbose_name = "03. Время автоматического импорта"
+        verbose_name_plural = "03. Время автоматического импорта"
         
 
 class Banner(models.Model):
@@ -186,5 +186,5 @@ class Banner(models.Model):
         return self.name or "Неизвестный баннер"
     
     class Meta:
-        verbose_name = "08. Баннер"
-        verbose_name_plural = "08. Баннеры"
+        verbose_name = "04. Баннер"
+        verbose_name_plural = "04. Баннеры"
