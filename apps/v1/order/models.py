@@ -1,6 +1,6 @@
 from django.db import models
 from apps.v1.accounts.models import CustomUser
-from apps.v1.product.models import Products
+from apps.v1.product.models import Products, ProductIDs
 
 
 class Tariffs(models.Model):
@@ -37,21 +37,11 @@ class CompanyAddress(models.Model):
         verbose_name = "02. Адреса компаний"
         verbose_name_plural = "02. Адреса компаний"
 
-
-class OrderCaluculationMode(models.Model):
-    name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название режима расчета")
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
-    updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     
-    def __str__(self):
-        return self.name or "Неизвестный режим расчета"
-    
-    class Meta:
-        verbose_name = "02. Режимы расчета"
-        verbose_name_plural = "02. Режимы расчета"
-        
-
 class Orders(models.Model):
+    class CalculationMode(models.TextChoices):
+        MODE_1 = 'mode_1', 'Режим 1: Общий первоначальный взнос'
+        MODE_2 = 'mode_2', 'Режим 2: Индивидуальный первоначальный взнос'
     
     class Status(models.TextChoices):
         PENDING = 'pending', 'В ожидании'
@@ -61,7 +51,11 @@ class Orders(models.Model):
         CANCELLED = 'cancelled', 'Отменен'
     
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="Пользователь")
-    order_calculation_mode = models.ForeignKey(OrderCaluculationMode, on_delete=models.CASCADE, verbose_name="Режим расчета")
+    order_calculation_mode = models.CharField(
+        max_length=255,
+        choices=CalculationMode.choices,
+        verbose_name="Режим расчета"
+    )
     status = models.CharField(
         max_length=255,
         choices=Status.choices,
@@ -86,6 +80,7 @@ class Orders(models.Model):
 class OrderItems(models.Model):
     order = models.ForeignKey(Orders, on_delete=models.CASCADE, related_name="items", verbose_name="Заказ")
     product = models.ForeignKey(Products, on_delete=models.CASCADE, verbose_name="Продукт")
+    variation = models.ForeignKey(ProductIDs, on_delete=models.CASCADE, null=True, blank=True, verbose_name="Вариация")
     tariff = models.ForeignKey(Tariffs, on_delete=models.CASCADE, verbose_name="Тариф")
     quantity = models.IntegerField(null=True, blank=True, verbose_name="Количество")
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Цена")

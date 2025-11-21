@@ -801,7 +801,7 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
     
     API_KEY = os.getenv('ISell_API_KEY')
     DOC_ID = os.getenv('ISell_DOC_ID')
-    COUNTERPARTIES_TABLE = os.getenv('ISell_COUNTERPARTIES', 'Counterparties')
+    COUNTERPARTIES_TABLE = os.getenv('ISell_CONTERPARTIES', 'Counterparties')
     
     if not API_KEY or not DOC_ID:
         return None

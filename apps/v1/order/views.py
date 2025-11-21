@@ -10,9 +10,9 @@ from calendar import monthrange
 from django.db import transaction
 
 from apps.v1.order.integrations.order_list import get_tariffs
-from apps.v1.order.models import Tariffs, Orders, OrderItems, OrderPaymentSchedule, OrderCaluculationMode, CompanyAddress
+from apps.v1.order.models import Tariffs, Orders, OrderItems, OrderPaymentSchedule, CompanyAddress
 from apps.v1.order.serializers import TariffsSerializer, OrdersSerializer, CompanyAddressSerializer
-from apps.v1.product.models import Products
+from apps.v1.product.models import Products, ProductIDs, ProductDetails
 
 
 class ImportTariffsView(APIView):
@@ -95,11 +95,11 @@ class CreateOrderView(APIView):
                     description='Режим расчета (1 или 2)',
                     enum=[1, 2]
                 ),
-                'total_down_payment': openapi.Schema(
+                'total_advance_payment': openapi.Schema(
                     type=openapi.TYPE_NUMBER,
                     description='Общий первоначальный взнос (только для mode 1)'
                 ),
-                'installment_period': openapi.Schema(
+                'tariff_id': openapi.Schema(
                     type=openapi.TYPE_INTEGER,
                     description='ID тарифа (только для mode 1)'
                 ),
@@ -111,8 +111,9 @@ class CreateOrderView(APIView):
                         properties={
                             'product_id': openapi.Schema(type=openapi.TYPE_INTEGER),
                             'quantity': openapi.Schema(type=openapi.TYPE_INTEGER),
-                            'installment_period': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID тарифа (только для mode 2)'),
-                            'total_down_payment': openapi.Schema(type=openapi.TYPE_NUMBER, description='Первоначальный взнос (только для mode 2)'),
+                            'variation_id': openapi.Schema(type=openapi.TYPE_INTEGER, x_nullable=True, description='ID вариации продукта'),
+                            'tariff_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID тарифа (только для mode 2)'),
+                            'advance_payment': openapi.Schema(type=openapi.TYPE_NUMBER, description='Первоначальный взнос (только для mode 2)'),
                         }
                     )
                 ),
@@ -194,66 +195,159 @@ class CreateOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        order_calculation_mode = get_object_or_404(OrderCaluculationMode, id=calculation_mode)
+        # Map calculation_mode to Orders.CalculationMode
+        calculation_mode_map = {
+            1: Orders.CalculationMode.MODE_1,
+            2: Orders.CalculationMode.MODE_2
+        }
+        
+        order_calculation_mode_value = calculation_mode_map.get(calculation_mode)
+        if not order_calculation_mode_value:
+            return Response(
+                {"error": "calculation_mode должен быть 1 или 2"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         order = Orders.objects.create(
             user=request.user,
-            order_calculation_mode=order_calculation_mode,
-            status='pending'
+            order_calculation_mode=order_calculation_mode_value,
+            status=Orders.Status.PENDING
         )
         
         if calculation_mode == 1:
-            total_down_payment = request.data.get('total_down_payment')
-            installment_period = request.data.get('installment_period')
+            total_advance_payment = request.data.get('total_advance_payment')
+            tariff_id = request.data.get('tariff_id')
             
-            if total_down_payment is None:
+            if total_advance_payment is None:
                 return Response(
-                    {"error": "Поле 'total_down_payment' обязательно для режима 1"},
+                    {"error": "Поле 'total_advance_payment' обязательно для режима 1"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            if installment_period is None:
+            if tariff_id is None:
                 return Response(
-                    {"error": "Поле 'installment_period' обязательно для режима 1"},
+                    {"error": "Поле 'tariff_id' обязательно для режима 1"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            tariff = get_object_or_404(Tariffs, id=installment_period)
+            tariff = get_object_or_404(Tariffs, id=tariff_id)
             
             total_product_sum = 0
             products_data = []
             for item in product_list:
                 product_id = item.get('product_id')
                 quantity = item.get('quantity', 1)
+                variation_id = item.get('variation_id')
                 
-                product = get_object_or_404(Products, id=product_id)
-                product_total = float(product.price) * quantity
+                if not product_id:
+                    return Response(
+                        {"error": f"Поле 'product_id' обязательно для каждого продукта"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                try:
+                    product = Products.objects.prefetch_related('details', 'ids').get(id=product_id)
+                except Products.DoesNotExist:
+                    return Response(
+                        {"error": f"Продукт с id={product_id} не найден"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                product_price = None
+                variation_obj = None
+                
+                # Get variation if variation_id provided
+                if variation_id:
+                    variation_obj = ProductIDs.objects.filter(product=product, variation_id=str(variation_id)).first()
+                    if variation_obj and variation_obj.variation_name:
+                        variation_name = variation_obj.variation_name.upper()
+                        details = product.details.all()
+                        
+                        for detail in details:
+                            color = detail.color or ""
+                            storage = detail.storage or ""
+                            sim = detail.sim or ""
+                            
+                            color_match = color.upper() in variation_name if color else False
+                            storage_match = storage.upper() in variation_name if storage else False
+                            
+                            sim_match = False
+                            if sim:
+                                sim_normalized = sim.replace("+", "").replace(" ", "").upper()
+                                if sim.upper() in variation_name:
+                                    sim_match = True
+                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                                    sim_match = True
+                                elif "SIM" in sim_normalized and "SIM" in variation_name:
+                                    sim_match = True
+                                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
+                                    sim_match = True
+                                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
+                                    sim_match = True
+                            
+                            if color_match and storage_match and (sim_match if sim else True):
+                                if detail.price is not None:
+                                    product_price = float(detail.price)
+                                    break
+                
+                if product_price is None:
+                    if product.price is not None:
+                        product_price = float(product.price)
+                    else:
+                        details = product.details.all()
+                        if details.exists():
+                            prices = [float(detail.price) for detail in details if detail.price is not None]
+                            if prices:
+                                product_price = min(prices)
+                
+                if product_price is None:
+                    continue
+                
+                product_total = product_price * quantity
                 total_product_sum += product_total
                 products_data.append({
                     'product': product,
                     'quantity': quantity,
-                    'product_total': product_total
+                    'product_total': product_total,
+                    'product_price': product_price,
+                    'variation': variation_obj
                 })
             
             for prod_data in products_data:
                 product = prod_data['product']
                 quantity = prod_data['quantity']
                 product_total = prod_data['product_total']
+                product_price = prod_data['product_price']
+                variation_obj = prod_data.get('variation')
                 
                 product_proportion = product_total / total_product_sum if total_product_sum > 0 else 0
-                product_down_payment = float(total_down_payment) * product_proportion
+                product_down_payment = float(total_advance_payment) * product_proportion
                 product_remaining = product_total - product_down_payment
                 
                 monthly_payment_amount = round(
                     product_remaining * (tariff.coefficient / tariff.payments_count)
                 )
                 
+                # Get or create variation
+                if not variation_obj:
+                    variation_obj = ProductIDs.objects.filter(product=product).first()
+                
+                # Validate that product still exists before creating order item
+                try:
+                    Products.objects.get(id=product.id)
+                except Products.DoesNotExist:
+                    return Response(
+                        {"error": f"Продукт с id={product.id} был удален или не существует"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
                 order_item = OrderItems.objects.create(
                     order=order,
                     product=product,
+                    variation=variation_obj,
                     tariff=tariff,
                     quantity=quantity,
-                    price=product.price,
+                    price=product_price,
                     down_payment=product_down_payment
                 )
                 
@@ -288,25 +382,124 @@ class CreateOrderView(APIView):
             for item in product_list:
                 product_id = item.get('product_id')
                 quantity = item.get('quantity', 1)
-                item_down_payment = item.get('total_down_payment', 0)
-                item_installment_period = item.get('installment_period')
+                variation_id = item.get('variation_id')
+                item_down_payment = item.get('advance_payment', 0)
+                item_tariff_id = item.get('tariff_id')
                 
-                if item_installment_period is None:
+                if not product_id:
+                    return Response(
+                        {"error": f"Поле 'product_id' обязательно для каждого продукта"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                if item_tariff_id is None:
+                    return Response(
+                        {"error": f"Поле 'tariff_id' обязательно для каждого продукта в режиме 2"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                try:
+                    product = Products.objects.prefetch_related('details', 'ids').get(id=product_id)
+                except Products.DoesNotExist:
+                    return Response(
+                        {"error": f"Продукт с id={product_id} не найден"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                tariff = get_object_or_404(Tariffs, id=item_tariff_id)
+                
+                product_price = None
+                variation_obj = None
+                
+                # Get variation if variation_id provided
+                if variation_id:
+                    variation_obj = ProductIDs.objects.filter(product=product, variation_id=str(variation_id)).first()
+                    if variation_obj and variation_obj.variation_name:
+                        variation_name = variation_obj.variation_name.upper()
+                        details = product.details.all()
+                        
+                        best_match_detail = None
+                        best_match_score = 0
+                        
+                        for detail in details:
+                            color = detail.color or ""
+                            storage = detail.storage or ""
+                            sim = detail.sim or ""
+                            
+                            color_match = color.upper() in variation_name if color else False
+                            storage_match = storage.upper() in variation_name if storage else False
+                            
+                            sim_match = False
+                            if sim:
+                                sim_normalized = sim.replace("+", "").replace(" ", "").upper()
+                                if sim.upper() in variation_name:
+                                    sim_match = True
+                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                                    sim_match = True
+                                elif "SIM" in sim_normalized and "SIM" in variation_name:
+                                    sim_match = True
+                                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
+                                    sim_match = True
+                                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
+                                    sim_match = True
+                            
+                            if color_match and storage_match and (sim_match if sim else True):
+                                if detail.price is not None:
+                                    product_price = float(detail.price)
+                                    break
+                            
+                            match_score = 0
+                            if color_match:
+                                match_score += 1
+                            if storage_match:
+                                match_score += 1
+                            if sim_match or not sim:
+                                match_score += 1
+                            
+                            if match_score > best_match_score and detail.price is not None:
+                                best_match_detail = detail
+                                best_match_score = match_score
+                        
+                        if product_price is None and best_match_detail and best_match_detail.price is not None:
+                            product_price = float(best_match_detail.price)
+                
+                if product_price is None:
+                    if product.price is not None:
+                        product_price = float(product.price)
+                    else:
+                        details = product.details.all()
+                        if details.exists():
+                            prices = [float(detail.price) for detail in details if detail.price is not None]
+                            if prices:
+                                product_price = min(prices)
+                
+                if product_price is None:
                     continue
                 
-                product = get_object_or_404(Products, id=product_id)
-                tariff = get_object_or_404(Tariffs, id=item_installment_period)
+                # Get or create variation
+                if not variation_obj:
+                    variation_obj = ProductIDs.objects.filter(product=product).first()
+                
+                # Validate that product still exists before creating order item
+                try:
+                    Products.objects.get(id=product.id)
+                except Products.DoesNotExist:
+                    return Response(
+                        {"error": f"Продукт с id={product.id} был удален или не существует"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
                 
                 order_item = OrderItems.objects.create(
                     order=order,
                     product=product,
+                    variation=variation_obj,
                     tariff=tariff,
                     quantity=quantity,
-                    price=product.price,
+                    price=product_price,
                     down_payment=item_down_payment
                 )
                 
-                product_total = float(product.price) * quantity
+                product_total = product_price * quantity
                 product_remaining = product_total - float(item_down_payment)
                 
                 monthly_payment_amount = round(

@@ -57,9 +57,12 @@ class CompanyAddressSerializer(serializers.ModelSerializer):
 class OrdersSerializer(serializers.ModelSerializer):
     items = OrderItemsSerializer(many=True, read_only=True)
     user_name = serializers.CharField(source='user.username', read_only=True)
-    calculation_mode_name = serializers.CharField(source='order_calculation_mode.name', read_only=True)
+    calculation_mode_name = serializers.SerializerMethodField()
     company_address_details = CompanyAddressSerializer(source='company_address', read_only=True)
     monthly_payments = serializers.SerializerMethodField()
+    
+    def get_calculation_mode_name(self, obj):
+        return obj.get_order_calculation_mode_display()
     
     class Meta:
         model = Orders

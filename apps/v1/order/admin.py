@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.v1.order.models import Tariffs, OrderCaluculationMode, Orders, OrderItems, OrderPaymentSchedule, CompanyAddress
+from apps.v1.order.models import Tariffs, Orders, OrderItems, OrderPaymentSchedule, CompanyAddress
 
 @admin.register(Tariffs)
 class TariffsAdmin(admin.ModelAdmin):
@@ -33,18 +33,38 @@ class OrderPaymentScheduleInline(admin.TabularInline):
     show_change_link = True
 
 
-class OrderItemsInline(admin.TabularInline):
-    model = OrderItems
+class OrderPaymentScheduleInline(admin.TabularInline):
+    model = OrderPaymentSchedule
     extra = 0
-    fields = ('product', 'tariff', 'quantity', 'price', 'down_payment')
-    readonly_fields = ('product', 'tariff', 'quantity', 'price', 'down_payment')
+    fields = ('month_number', 'payment_date', 'monthly_payment_amount', 'is_paid', 'paid_at')
+    readonly_fields = ('month_number', 'payment_date', 'monthly_payment_amount')
     can_delete = False
     show_change_link = True
 
 
+class OrderItemsInline(admin.TabularInline):
+    model = OrderItems
+    extra = 0
+    fields = ('product', 'variation', 'tariff', 'quantity', 'price', 'down_payment')
+    readonly_fields = ('product', 'variation', 'tariff', 'quantity', 'price', 'down_payment')
+    can_delete = False
+    show_change_link = True
+
+
+@admin.register(OrderItems)
+class OrderItemsAdmin(admin.ModelAdmin):
+    list_display = ('order', 'product', 'variation', 'tariff', 'quantity', 'price', 'down_payment', 'created_at')
+    search_fields = ('order__user__username', 'product__name', 'variation__variation_name')
+    list_filter = ('order', 'tariff', 'created_at')
+    readonly_fields = ('created_at', 'updated_at')
+    ordering = ('-created_at',)
+    list_per_page = 20
+    inlines = [OrderPaymentScheduleInline]
+
+
 @admin.register(Orders)
 class OrdersAdmin(admin.ModelAdmin):
-    list_display = ('user', 'order_calculation_mode', 'get_status_display', 'company_address', 'address', 'status', 'created_at')
+    list_display = ('user', 'get_calculation_mode_display', 'get_status_display', 'company_address', 'address', 'status', 'created_at')
     search_fields = ('user__username', 'user__email', 'address')
     list_filter = ('status', 'order_calculation_mode', 'company_address', 'created_at')
     readonly_fields = ('created_at', 'updated_at', 'display_payment_schedule')
@@ -56,6 +76,10 @@ class OrdersAdmin(admin.ModelAdmin):
     def get_status_display(self, obj):
         return obj.get_status_display()
     get_status_display.short_description = 'Статус'
+    
+    def get_calculation_mode_display(self, obj):
+        return obj.get_order_calculation_mode_display()
+    get_calculation_mode_display.short_description = 'Режим расчета'
     
     @admin.action(description='Изменить статус на "В обработке"')
     def mark_as_processing(self, request, queryset):
