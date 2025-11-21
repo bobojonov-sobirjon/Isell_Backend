@@ -31,6 +31,7 @@ Isell_ADVANCED_PAYMENT_ASSESSMENT = os.getenv('ISell_PRODUCT_ADVANCED_PAYMENT_AS
 Isell_RISK_CATEGORIES = os.getenv('ISell_RISK_CATEGORY')
 Isell_PRICE_CATEGORIES = os.getenv('ISell_PRICE_CATEGORY')
 
+ISell_CONTERPARTIES=os.getenv('ISell_CONTERPARTIES')
 ISell_APPLICATION = os.getenv('ISell_APPLICATION')
 ISell_PRODUCTS = os.getenv('ISell_PRODUCTS')
 
@@ -171,7 +172,7 @@ def get_advanced_payment_assessment():
             
             try:
                 # ProductCategory ni yaratish yoki yangilash
-                product_category, created = ProductCategory.objects.update_or_create(
+                product_category, created = ProductRiskCategory.objects.update_or_create(
                     grist_product_category_id=str(assessment_id),
                     defaults={
                         "name": price_category_name,
@@ -220,6 +221,11 @@ def get_application():
     application_url = get_url(ISell_APPLICATION)
     application_response = requests.get(application_url, headers=headers)
     return application_response.json()
+
+def get_counterparties_in_grist():
+    counterparties_url = get_url(ISell_CONTERPARTIES)
+    counterparties_response = requests.get(counterparties_url, headers=headers)
+    return counterparties_response.json()
 
 def get_products_in_grist():
     products_url = get_url(ISell_PRODUCTS)

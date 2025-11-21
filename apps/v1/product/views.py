@@ -2,11 +2,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.db.models import Q, Prefetch
 from django.shortcuts import get_object_or_404
 from datetime import datetime, timedelta
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from apps.v1.product.models import (
     Categories, Products, ProductDetails, ProductIDs,
@@ -17,16 +18,16 @@ from apps.v1.product.serializers import (
 )
 from apps.v1.order.models import Tariffs, Orders
 from apps.v1.product.models import ProductRiskCategory
-from apps.v1.order.integrations.advanced_payment_assessment import get_application, get_products_in_grist
+from apps.v1.order.integrations.advanced_payment_assessment import (
+    get_application, get_products_in_grist, get_counterparties_in_grist
+)
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-
 
 class ProductPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = 'page_size'
     max_page_size = 100
-
 
 class CategoriesListView(APIView):
     permission_classes = [AllowAny]
@@ -71,7 +72,6 @@ class CategoriesListView(APIView):
             'count': len(serializer.data),
             'results': serializer.data
         }, status=status.HTTP_200_OK)
-
 
 class ProductListView(APIView):
     permission_classes = [AllowAny]
@@ -162,7 +162,6 @@ class ProductListView(APIView):
         response = paginator.get_paginated_response(serializer.data)
         return response
 
-
 class ProductDetailView(APIView):
     permission_classes = [AllowAny]
     
@@ -249,7 +248,6 @@ class ProductDetailView(APIView):
         )
         
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 
 class CalculateMonthlyPaymentView(APIView):
     """
@@ -353,12 +351,266 @@ class CalculateMonthlyPaymentView(APIView):
         
         return Response(response_data, status=status.HTTP_200_OK)
 
+def get_user_counterparty_id(user):
+    """
+    Get counterparty_id from Grist based on user's pnfl and date_of_birth
+    """
+
+    if not user or not user.pnfl or not user.date_of_birth:
+
+        return None
+    
+    try:
+
+        counterparties_data = get_counterparties_in_grist()
+        counterparties = counterparties_data.get('records', [])
+
+        # Convert user's date_of_birth to timestamp
+        # date objects don't have timestamp(), so convert to datetime first
+        # Grist stores timestamps in UTC, so we need to create UTC datetime
+        if user.date_of_birth:
+            # Create datetime at midnight UTC for the date
+            # Use timezone-aware datetime to ensure UTC
+            from django.utils import timezone
+            import pytz
+            
+            user_dob_datetime = datetime.combine(user.date_of_birth, datetime.min.time())
+            # Make it timezone-aware (UTC)
+            user_dob_datetime_utc = timezone.make_aware(user_dob_datetime, pytz.UTC)
+            user_dob_timestamp = int(user_dob_datetime_utc.timestamp())
+
+        else:
+            user_dob_timestamp = None
+
+        for idx, counterparty in enumerate(counterparties):
+            fields = counterparty.get('fields', {})
+            pinfl = fields.get('pinfl', '')
+            date_of_birth = fields.get('date_of_birth')
+            counterparty_id = counterparty.get('id')
+
+            # Check pnfl match
+            pinfl_match = pinfl == user.pnfl
+
+            # Check date_of_birth match
+            # Handle different types: None, int, string, or datetime
+            dob_match = False
+            if date_of_birth is None and user_dob_timestamp is None:
+                dob_match = True
+
+            elif date_of_birth is not None and user_dob_timestamp is not None:
+                try:
+                    # If date_of_birth is a string (like "2000-05-18"), parse it
+                    if isinstance(date_of_birth, str):
+                        # Try to parse as date string
+                        try:
+                            from datetime import datetime as dt
+                            parsed_date = dt.strptime(date_of_birth, "%Y-%m-%d").date()
+                            # Convert to UTC timestamp
+                            from django.utils import timezone
+                            import pytz
+                            
+                            parsed_datetime = datetime.combine(parsed_date, datetime.min.time())
+                            parsed_datetime_utc = timezone.make_aware(parsed_datetime, pytz.UTC)
+                            grist_dob = int(parsed_datetime_utc.timestamp())
+
+                        except ValueError:
+                            # If parsing fails, try to convert directly to int
+                            grist_dob = int(float(date_of_birth))
+
+                    else:
+                        # Convert to int if it's a float or already int
+                        grist_dob = int(date_of_birth)
+                    
+                    # Compare timestamps (allow small difference due to timezone/rounding)
+                    # Grist might store timestamps with slight differences, so we check if they're within 24 hours
+                    time_diff = abs(grist_dob - user_dob_timestamp)
+                    # Allow up to 12 hours difference (43200 seconds) for timezone issues
+                    dob_match = time_diff < 43200
+
+                except (ValueError, TypeError):
+                    dob_match = False
+            else:
+                pass
+            
+            if pinfl_match and dob_match:
+                return counterparty_id
+
+        return None
+    except Exception as e:
+
+        return None
+
+def check_user_has_application(user, applications):
+    """
+    Check if user has any application in get_application()
+    Returns (has_application, counterparty_id)
+    """
+
+    if not user:
+
+        return (False, None)
+    
+    try:
+        counterparty_id = get_user_counterparty_id(user)
+
+        if not counterparty_id:
+
+            return (False, None)
+
+        # Check if user has any application (any stage)
+        for idx, app in enumerate(applications):
+            app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+            app_stage = app.get('fields', {}).get('stage', '')
+            app_id = app.get('id')
+
+            if app_counterparty_id == counterparty_id:
+
+                return (True, counterparty_id)
+
+        return (False, None)
+    except Exception as e:
+
+        return (False, None)
+
+def calculate_minimum_contribution_for_products(user, products_data, grist_product_map, applications, counterparty_id):
+    """
+    Calculate minimum_contribution for products based on user's approved applications
+    """
+
+    if not user or not counterparty_id:
+
+        return 0
+    
+    try:
+        # Filter applications by counterparty_id and check for Accepted stage
+
+        approved_applications = []
+        for idx, app in enumerate(applications):
+            app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+            app_stage = app.get('fields', {}).get('stage', '')
+            app_id = app.get('id')
+
+            # Only accept "Accepted" stage
+            if app_counterparty_id == counterparty_id and app_stage == 'Accepted':
+
+                approved_applications.append(app)
+
+        if not approved_applications:
+
+            return 0
+        
+        # Get risk_category_id from approved applications
+        # If application is found, use its risk_category_id even if products don't match
+
+        risk_category_id = None
+        for app_idx, app in enumerate(approved_applications):
+            app_products = app.get('fields', {}).get('products', [])
+            app_risk_category_id = app.get('fields', {}).get('risk_category_id')
+            app_id = app.get('id')
+
+            # First, try to find matching product in app_products
+            product_found = False
+            for prod_idx, prod_data in enumerate(products_data):
+                product = prod_data['product']
+                product_id_obj = ProductIDs.objects.filter(product=product).first()
+                grist_product_id = product_id_obj.grist_product_id if product_id_obj and product_id_obj.grist_product_id else None
+
+                if grist_product_id:
+                    try:
+                        grist_product_id = int(grist_product_id)
+
+                        if grist_product_id in app_products:
+                            risk_category_id = app_risk_category_id
+                            product_found = True
+
+                            break
+                        else:
+                            pass
+                    except (ValueError, TypeError):
+                        continue
+                else:
+                    pass
+            
+            # If no product match found but application exists, use its risk_category_id anyway
+            if not product_found and app_risk_category_id:
+                risk_category_id = app_risk_category_id
+
+                break
+            
+            if risk_category_id:
+                break
+        
+        if not risk_category_id:
+
+            return 0
+
+        # Calculate minimum_contribution for all products
+        minimum_contribution = 0
+
+        for prod_idx, prod_data in enumerate(products_data):
+            product = prod_data['product']
+            quantity = prod_data['quantity']
+            product_price = prod_data['price']
+            product_id_obj = ProductIDs.objects.filter(product=product).first()
+            grist_product_id = product_id_obj.grist_product_id if product_id_obj and product_id_obj.grist_product_id else None
+
+            if grist_product_id:
+                try:
+                    grist_product_id = int(grist_product_id)
+                except (ValueError, TypeError):
+
+                    continue
+                
+                if grist_product_id in grist_product_map:
+                    price_category_id = grist_product_map[grist_product_id]
+
+                    if risk_category_id and price_category_id:
+                        try:
+                            # Try to find ProductRiskCategory
+
+                            # Check what exists in database
+                            all_risk_categories = ProductRiskCategory.objects.filter(
+                                grist_risk_category_id=str(risk_category_id)
+                            )
+
+                            for rc in all_risk_categories:
+                                pass
+                            
+                            product_risk_category = ProductRiskCategory.objects.get(
+                                grist_risk_category_id=str(risk_category_id),
+                                grist_price_category_id=str(price_category_id)
+                            )
+                            percentage = product_risk_category.percentage or 0
+                            product_total = product_price * quantity
+                            contribution = product_total * percentage
+                            minimum_contribution += contribution
+
+                        except ProductRiskCategory.DoesNotExist:
+
+                            try:
+                                available = ProductRiskCategory.objects.filter(
+                                    grist_risk_category_id=str(risk_category_id)
+                                )
+                                for rc in available:
+                                    pass
+                            except:
+                                pass
+                            pass
+                        except Exception:
+
+                            pass
+                else:
+                    pass
+        
+        return minimum_contribution
+    except Exception:
+        return 0
 
 class CalculatePaymentScheduleView(APIView):
     """
     View for calculating payment schedule based on calculation mode.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     
     @swagger_auto_schema(
         tags=['Продукты'],
@@ -454,6 +706,9 @@ class CalculatePaymentScheduleView(APIView):
         calculation_mode = request.data.get('calculation_mode')
         product_list = request.data.get('product_list', [])
         
+        # Get user from request
+        user = request.user if hasattr(request, 'user') and request.user.is_authenticated else None
+        
         if calculation_mode is None:
             return Response(
                 {"error": "Поле 'calculation_mode' обязательно"},
@@ -473,6 +728,7 @@ class CalculatePaymentScheduleView(APIView):
             )
         
         monthly_payments = []
+        has_application = False  # Initialize for both modes
         
         if calculation_mode == 1:
             total_down_payment = request.data.get('total_advance_payment')
@@ -498,12 +754,6 @@ class CalculatePaymentScheduleView(APIView):
                     )
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
-            
-            user = request.user if hasattr(request, 'user') and request.user.is_authenticated else None
-            
-            has_previous_orders = False
-            if user:
-                has_previous_orders = Orders.objects.filter(user=user).exists()
             
             total_product_sum = 0
             products_data = []
@@ -588,68 +838,38 @@ class CalculatePaymentScheduleView(APIView):
                 monthly_payment_amount = 0
             
             minimum_contribution = 0
-            if has_previous_orders:
+            if user:
                 try:
-                    application_data = get_application()
-                    applications = application_data.get('records', [])
+                    # Use ThreadPoolExecutor for concurrent API calls
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        application_future = executor.submit(get_application)
+                        grist_products_future = executor.submit(get_products_in_grist)
+                        
+                        application_data = application_future.result()
+                        grist_products_data = grist_products_future.result()
                     
-                    grist_products_data = get_products_in_grist()
+                    applications = application_data.get('records', [])
                     grist_products = grist_products_data.get('records', [])
                     
-                    grist_product_map = {}
-                    for grist_product in grist_products:
-                        grist_id = grist_product.get('id')
-                        price_category_id = grist_product.get('fields', {}).get('price_category_id')
-                        if grist_id and price_category_id:
-                            grist_product_map[grist_id] = price_category_id
+                    # Check if user has any application
+                    has_application, counterparty_id = check_user_has_application(user, applications)
                     
-                    risk_category_id = None
-                    for app in applications:
-                        app_products = app.get('fields', {}).get('products', [])
-                        for prod_data in products_data:
-                            product = prod_data['product']
-                            product_id_obj = ProductIDs.objects.filter(product=product).first()
-                            grist_product_id = product_id_obj.grist_product_id if product_id_obj and product_id_obj.grist_product_id else None
-                            if grist_product_id:
-                                try:
-                                    grist_product_id = int(grist_product_id)
-                                except (ValueError, TypeError):
-                                    continue
-                            if grist_product_id and grist_product_id in app_products:
-                                risk_category_id = app.get('fields', {}).get('risk_category_id')
-                                break
-                        if risk_category_id:
-                            break
-                    
-                    for prod_data in products_data:
-                        product = prod_data['product']
-                        quantity = prod_data['quantity']
-                        product_price = prod_data['price']
-                        product_id_obj = ProductIDs.objects.filter(product=product).first()
-                        grist_product_id = product_id_obj.grist_product_id if product_id_obj and product_id_obj.grist_product_id else None
+                    if has_application:
+                        grist_product_map = {}
+                        for grist_product in grist_products:
+                            grist_id = grist_product.get('id')
+                            price_category_id = grist_product.get('fields', {}).get('price_category_id')
+                            if grist_id and price_category_id:
+                                grist_product_map[grist_id] = price_category_id
                         
-                        if grist_product_id:
-                            try:
-                                grist_product_id = int(grist_product_id)
-                            except (ValueError, TypeError):
-                                continue
-                        
-                        if grist_product_id and grist_product_id in grist_product_map:
-                            price_category_id = grist_product_map[grist_product_id]
-                            
-                            if risk_category_id and price_category_id:
-                                try:
-                                    product_risk_category = ProductRiskCategory.objects.get(
-                                        grist_risk_category_id=str(risk_category_id),
-                                        grist_price_category_id=str(price_category_id)
-                                    )
-                                    percentage = product_category.percentage or 0
-                                    product_total = product_price * quantity
-                                    minimum_contribution += product_total * percentage
-                                except ProductRiskCategory.DoesNotExist:
-                                    pass
+                        # Calculate minimum_contribution using the new helper function
+                        minimum_contribution = calculate_minimum_contribution_for_products(
+                            user, products_data, grist_product_map, applications, counterparty_id
+                        )
+                    # If user doesn't have application, minimum_contribution stays 0
                 except Exception as e:
                     minimum_contribution = 0
+                    has_application = False
             
             current_date = datetime.now()
             
@@ -687,21 +907,36 @@ class CalculatePaymentScheduleView(APIView):
             max_months = 0
             total_remaining_after_advance = 0
             
-            try:
-                application_data = get_application()
-                applications = application_data.get('records', [])
-                grist_products_data = get_products_in_grist()
-                grist_products = grist_products_data.get('records', [])
-                
-                grist_product_map = {}
-                for grist_product in grist_products:
-                    grist_id = grist_product.get('id')
-                    price_category_id = grist_product.get('fields', {}).get('price_category_id')
-                    if grist_id and price_category_id:
-                        grist_product_map[grist_id] = price_category_id
-            except:
-                grist_product_map = {}
-                applications = []
+            # Check if user has application
+            has_application = False
+            counterparty_id = None
+            grist_product_map = {}
+            applications = []
+            
+            if user:
+                try:
+                    # Use ThreadPoolExecutor for concurrent API calls
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        application_future = executor.submit(get_application)
+                        grist_products_future = executor.submit(get_products_in_grist)
+                        
+                        application_data = application_future.result()
+                        grist_products_data = grist_products_future.result()
+                    
+                    applications = application_data.get('records', [])
+                    grist_products = grist_products_data.get('records', [])
+                    
+                    # Check if user has any application
+                    has_application, counterparty_id = check_user_has_application(user, applications)
+                    
+                    if has_application:
+                        for grist_product in grist_products:
+                            grist_id = grist_product.get('id')
+                            price_category_id = grist_product.get('fields', {}).get('price_category_id')
+                            if grist_id and price_category_id:
+                                grist_product_map[grist_id] = price_category_id
+                except:
+                    pass
             
             for item in product_list:
                 product_id = item.get('product_id')
@@ -839,36 +1074,69 @@ class CalculatePaymentScheduleView(APIView):
                     merged_payments[month_num]['amount'] += product_monthly_payment
                     max_months = max(max_months, month_num)
                 
-                try:
-                    product_id_obj = ProductIDs.objects.filter(product=product).first()
-                    grist_product_id = product_id_obj.grist_product_id if product_id_obj and product_id_obj.grist_product_id else None
-                    if grist_product_id:
-                        try:
-                            grist_product_id = int(grist_product_id)
-                        except (ValueError, TypeError):
-                            continue
-                        
-                        risk_category_id = None
+                # Calculate minimum_contribution for this product
+                # Only calculate if user has application
+
+                if has_application and counterparty_id:
+                    try:
+                        # Filter applications by counterparty_id and check for Accepted stage
+                        approved_applications = []
                         for app in applications:
-                            app_products = app.get('fields', {}).get('products', [])
-                            if grist_product_id in app_products:
-                                risk_category_id = app.get('fields', {}).get('risk_category_id')
-                                break
-                        
-                        if grist_product_id in grist_product_map:
-                            price_category_id = grist_product_map[grist_product_id]
+                            app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+                            app_stage = app.get('fields', {}).get('stage', '')
+                            # Only accept "Accepted" stage
+                            if app_counterparty_id == counterparty_id and app_stage == 'Accepted':
+                                approved_applications.append(app)
+
+                        if approved_applications:
+                            # Get risk_category_id from approved applications
+                            risk_category_id = None
+                            product_id_obj = ProductIDs.objects.filter(product=product).first()
+                            grist_product_id = product_id_obj.grist_product_id if product_id_obj and product_id_obj.grist_product_id else None
                             
-                            if risk_category_id and price_category_id:
+                            # First, try to find matching product in app_products
+                            product_found = False
+                            if grist_product_id:
                                 try:
-                                    product_category = ProductCategory.objects.get(
-                                        grist_risk_category_id=str(risk_category_id),
-                                        grist_price_category_id=str(price_category_id)
-                                    )
-                                    percentage = product_category.percentage or 0
-                                    minimum_contribution += product_total * percentage
-                                except ProductCategory.DoesNotExist:
+                                    grist_product_id = int(grist_product_id)
+                                except (ValueError, TypeError):
                                     pass
-                except:
+                                
+                                if grist_product_id:
+                                    for app in approved_applications:
+                                        app_products = app.get('fields', {}).get('products', [])
+                                        if grist_product_id in app_products:
+                                            risk_category_id = app.get('fields', {}).get('risk_category_id')
+                                            product_found = True
+                                            break
+                            
+                            # If no product match found but application exists, use its risk_category_id anyway
+                            if not product_found and approved_applications:
+                                risk_category_id = approved_applications[0].get('fields', {}).get('risk_category_id')
+
+                            if risk_category_id:
+                                if grist_product_id and grist_product_id in grist_product_map:
+                                    price_category_id = grist_product_map[grist_product_id]
+                                    
+                                    if price_category_id:
+                                        try:
+
+                                            product_risk_category = ProductRiskCategory.objects.get(
+                                                grist_risk_category_id=str(risk_category_id),
+                                                grist_price_category_id=str(price_category_id)
+                                            )
+                                            percentage = product_risk_category.percentage or 0
+                                            contribution = product_total * percentage
+                                            minimum_contribution += contribution
+
+                                        except ProductRiskCategory.DoesNotExist:
+
+                                            pass
+                                else:
+                                    pass
+                    except Exception:
+                        pass
+                else:
                     pass
             
             monthly_payments = []
@@ -881,13 +1149,13 @@ class CalculatePaymentScheduleView(APIView):
             
             monthly_payment_amount = merged_payments.get(1, {}).get('amount', 0) if merged_payments else 0
         
-        if calculation_mode == 1:
-            if not has_previous_orders:
-                ability_to_order = True
-            else:
-                ability_to_order = minimum_contribution <= float(total_down_payment)
+        # ability_to_order logic:
+        # - If user doesn't have application: minimum_contribution = 0, ability_to_order = True
+        # - If user has application: ability_to_order = total_down_payment >= minimum_contribution
+        if has_application:
+            ability_to_order = float(total_down_payment) >= minimum_contribution
         else:
-            ability_to_order = minimum_contribution <= float(total_down_payment)
+            ability_to_order = True
         
         response_product_list = []
         
