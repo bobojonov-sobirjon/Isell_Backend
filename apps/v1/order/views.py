@@ -10,6 +10,13 @@ from calendar import monthrange
 from django.db import transaction
 
 from apps.v1.order.integrations.order_list import get_tariffs
+from apps.v1.order.integrations.my_orders import get_all_grist_data_for_counterparties
+from apps.v1.order.integrations.my_orders_helpers import (
+    extract_counterparty_ids_from_orders,
+    build_product_price_map,
+    group_sales_products_by_sale_id,
+    separate_active_and_completed_sales
+)
 from apps.v1.order.models import Tariffs, Orders, OrderItems, OrderPaymentSchedule, CompanyAddress
 from apps.v1.order.serializers import TariffsSerializer, OrdersSerializer, CompanyAddressSerializer
 from apps.v1.product.models import Products, ProductIDs, ProductDetails
@@ -103,6 +110,10 @@ class CreateOrderView(APIView):
                     type=openapi.TYPE_INTEGER,
                     description='ID тарифа (только для mode 1)'
                 ),
+                'counterparty_id': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='ID контрагента (только для mode 1)'
+                ),
                 'product_list': openapi.Schema(
                     type=openapi.TYPE_ARRAY,
                     description='Список продуктов',
@@ -183,6 +194,13 @@ class CreateOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        counterparty_id = request.data.get('counterparty_id')
+        if counterparty_id is None:
+            return Response(
+                {"error": "Поле 'counterparty_id' обязательно"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         if not product_list:
             return Response(
                 {"error": "Поле 'product_list' обязательно и не может быть пустым"},
@@ -211,7 +229,8 @@ class CreateOrderView(APIView):
         order = Orders.objects.create(
             user=request.user,
             order_calculation_mode=order_calculation_mode_value,
-            status=Orders.Status.PENDING
+            status=Orders.Status.PENDING,
+            counterparty_id=counterparty_id,
         )
         
         if calculation_mode == 1:
@@ -718,3 +737,75 @@ class UpdateOrderAddressView(APIView):
         
         serializer = OrdersSerializer(order_with_items)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class MyOrdersView(APIView):
+    """
+    API to get user's orders (active and completed sales)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        tags=['Заказы'],
+        operation_summary="Мои заказы",
+        operation_description="Получить список активных и завершенных заказов пользователя",
+        responses={
+            200: openapi.Response(
+                description="Список заказов",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "active_sales": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            description="Активные заказы",
+                            items=openapi.Schema(type=openapi.TYPE_OBJECT)
+                        ),
+                        "completed_sales": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            description="Завершенные заказы",
+                            items=openapi.Schema(type=openapi.TYPE_OBJECT)
+                        )
+                    }
+                )
+            )
+        }
+    )
+    def get(self, request):
+        user = request.user
+        
+        # Get user's orders (optimized query)
+        orders = Orders.objects.filter(user=user).only('counterparty_id')
+        
+        # Extract counterparty_ids
+        counterparty_ids = extract_counterparty_ids_from_orders(orders)
+        
+        if not counterparty_ids:
+            return Response({
+                "active_sales": [],
+                "completed_sales": []
+            }, status=status.HTTP_200_OK)
+        
+        # Get all Grist data (optimized - product_price fetched only once)
+        all_sales, all_sales_products, product_price_data, all_transactions = get_all_grist_data_for_counterparties(
+            list(counterparty_ids)
+        )
+        
+        if not all_sales:
+            return Response({
+                "active_sales": [],
+                "completed_sales": []
+            }, status=status.HTTP_200_OK)
+        
+        # Build maps for quick lookup
+        product_price_map = build_product_price_map(product_price_data)
+        sales_products_by_sale = group_sales_products_by_sale_id(all_sales_products)
+        
+        # Process and separate sales
+        active_sales, completed_sales = separate_active_and_completed_sales(
+            all_sales, sales_products_by_sale, product_price_map, all_transactions
+        )
+        
+        return Response({
+            "active_sales": active_sales,
+            "completed_sales": completed_sales
+        }, status=status.HTTP_200_OK)

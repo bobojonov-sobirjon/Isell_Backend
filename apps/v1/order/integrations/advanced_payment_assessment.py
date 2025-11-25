@@ -1,6 +1,8 @@
 import requests
 import json
 import os
+import asyncio
+import aiohttp
 from pathlib import Path
 
 from apps.v1.product.models import ProductRiskCategory
@@ -34,6 +36,7 @@ Isell_PRICE_CATEGORIES = os.getenv('ISell_PRICE_CATEGORY')
 ISell_CONTERPARTIES=os.getenv('ISell_CONTERPARTIES')
 ISell_APPLICATION = os.getenv('ISell_APPLICATION')
 ISell_PRODUCTS = os.getenv('ISell_PRODUCTS')
+ISell_PRODUCT_PRICE = os.getenv('ISell_PRODUCT_PRICE')
 
 
 def get_url(table_name):
@@ -231,3 +234,222 @@ def get_products_in_grist():
     products_url = get_url(ISell_PRODUCTS)
     products_response = requests.get(products_url, headers=headers)
     return products_response.json()
+
+async def fetch_price_data_async(session, url):
+    """Async function to fetch Price data from Grist"""
+    try:
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                return await response.json()
+            else:
+                return None
+    except Exception:
+        return None
+
+def get_price_data_by_product_ids(product_ids):
+    """
+    Get Price data from Grist filtered by product_ids
+    
+    Args:
+        product_ids: List of product IDs to filter by
+    
+    Returns:
+        List of Price records matching the product_ids
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not ISell_PRODUCT_PRICE or not product_ids:
+        return []
+    
+    try:
+        url = get_url(ISell_PRODUCT_PRICE)
+        
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                data = await fetch_price_data_async(session, url)
+                return data
+        
+        data = asyncio.run(fetch())
+        
+        if not data:
+            return []
+        
+        records = data.get("records", [])
+        
+        # Filter records by product_id
+        filtered_records = []
+        for record in records:
+            fields = record.get("fields", {})
+            record_product_id = fields.get("product_id")
+            
+            # Check if this record's product_id is in our list
+            if record_product_id in product_ids:
+                filtered_records.append(record)
+        
+        return filtered_records
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error fetching Price data: {str(e)}")
+        return []
+
+def get_product_ids_from_price_table_by_grist_ids(grist_product_ids):
+    """
+    Get product_ids from Price table by grist_product_ids (record ids)
+    
+    Args:
+        grist_product_ids: List of grist_product_ids (Price table record ids)
+    
+    Returns:
+        List of product_ids from Price table fields.product_id
+    """
+    if not ISell_PRODUCT_PRICE or not grist_product_ids:
+        return []
+    
+    try:
+        url = get_url(ISell_PRODUCT_PRICE)
+        
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                data = await fetch_price_data_async(session, url)
+                return data
+        
+        data = asyncio.run(fetch())
+        
+        if not data:
+            return []
+        
+        records = data.get("records", [])
+        
+        # Filter records by id (grist_product_id is the record id in Price table)
+        product_ids = []
+        grist_ids_set = set(grist_product_ids)  # Use set for faster lookup
+        
+        for record in records:
+            record_id = record.get("id")
+            if record_id in grist_ids_set:
+                fields = record.get("fields", {})
+                product_id = fields.get("product_id")
+                if product_id:
+                    product_ids.append(product_id)
+        
+        return product_ids
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error getting product_ids from Price table: {str(e)}")
+        return []
+
+def post_to_grist_application(counterparty_id, date, stage, risk_category_id, issue_limit, products):
+    """
+    Create a new application record in Grist Application table
+    
+    Args:
+        counterparty_id: Counterparty ID
+        date: Date (string format YYYY-MM-DD)
+        stage: Stage/Status (New, Assessment, Accepted, Denied, Denied by client, Success)
+        risk_category_id: Risk category ID
+        issue_limit: Issue limit (total_advance_payment)
+        products: List of grist_product_ids
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if not API_KEY or not DOC_ID or not ISell_APPLICATION:
+        logger.error("Missing API_KEY, DOC_ID, or ISell_APPLICATION environment variables")
+        return None
+    
+    if not counterparty_id:
+        logger.error("counterparty_id is required but was not provided")
+        return None
+    
+    # Note: products parameter contains product_ids from Price table (fields.product_id)
+    
+    url = f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{ISell_APPLICATION}/records"
+    
+    request_headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    # Convert date string to timestamp (Grist expects timestamp for date fields)
+    date_timestamp = None
+    if date:
+        try:
+            from datetime import datetime as dt
+            from django.utils import timezone
+            import pytz
+            
+            # Parse date string (YYYY-MM-DD format)
+            parsed_date = dt.strptime(date, "%Y-%m-%d").date()
+            # Convert to UTC datetime at midnight
+            parsed_datetime = dt.combine(parsed_date, dt.min.time())
+            parsed_datetime_utc = timezone.make_aware(parsed_datetime, pytz.UTC)
+            date_timestamp = int(parsed_datetime_utc.timestamp())
+        except Exception as e:
+            logger.warning(f"Failed to convert date to timestamp: {date}, error: {str(e)}")
+            # Fallback: try to use date as is
+            date_timestamp = date
+    
+    # Format products as Grist reference list: ["L", id1, id2, ...]
+    # Grist reference fields that are lists need to be formatted with "L" prefix
+    formatted_products = []
+    if products and len(products) > 0:
+        formatted_products = ["L"] + products
+    else:
+        formatted_products = []
+    
+    # Build fields dictionary, only including non-None values
+    fields = {
+        "counterparty_id": counterparty_id,
+        "date": date_timestamp if date_timestamp else date,
+        "stage": stage,
+        "issue_limit": issue_limit,
+        "products": formatted_products
+    }
+    
+    # Only add risk_category_id if it's not None
+    if risk_category_id is not None:
+        fields["risk_category_id"] = risk_category_id
+    
+    payload = {
+        "records": [
+            {
+                "fields": fields
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=request_headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
+        error_detail = ""
+        response_text = ""
+        try:
+            if hasattr(e, 'response') and e.response is not None:
+                response_text = e.response.text
+                try:
+                    error_detail = e.response.json()
+                except:
+                    error_detail = response_text
+            else:
+                error_detail = str(e)
+        except Exception as ex:
+            error_detail = str(e)
+            logger.error(f"Error parsing error response: {str(ex)}")
+        
+        status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else 'N/A'
+        logger.error(f"HTTP error posting to Grist application: {error_detail}, Status: {status_code}")
+        logger.error(f"Response text: {response_text}")
+        logger.error(f"Payload was: {payload}")
+        return None
+    except Exception as e:
+        logger.error(f"Error posting to Grist application: {str(e)}, Type: {type(e).__name__}")
+        logger.error(f"Payload was: {payload}")
+        return None

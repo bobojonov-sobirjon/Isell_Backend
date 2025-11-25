@@ -66,6 +66,7 @@ class Orders(models.Model):
     address = models.CharField(max_length=255, null=True, blank=True, verbose_name="Адрес доставки")
     latitude = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True, verbose_name="Широта")
     longitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True, verbose_name="Долгота")
+    counterparty_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID контрагента")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     

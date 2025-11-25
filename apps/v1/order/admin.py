@@ -64,7 +64,7 @@ class OrderItemsAdmin(admin.ModelAdmin):
 
 @admin.register(Orders)
 class OrdersAdmin(admin.ModelAdmin):
-    list_display = ('user', 'get_calculation_mode_display', 'get_status_display', 'company_address', 'address', 'status', 'created_at')
+    list_display = ('user', 'get_calculation_mode_display', 'get_status_display', 'company_address', 'address', 'status', 'counterparty_id', 'created_at')
     search_fields = ('user__username', 'user__email', 'address')
     list_filter = ('status', 'order_calculation_mode', 'company_address', 'created_at')
     readonly_fields = ('created_at', 'updated_at', 'display_payment_schedule')
@@ -103,7 +103,7 @@ class OrdersAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Основная информация', {
-            'fields': ('user', 'order_calculation_mode', 'status')
+            'fields': ('user', 'order_calculation_mode', 'status', 'counterparty_id')
         }),
         ('Адрес доставки', {
             'fields': ('company_address', 'address', 'latitude', 'longitude')

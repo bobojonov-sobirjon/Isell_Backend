@@ -19,7 +19,7 @@ from apps.v1.product.serializers import (
 from apps.v1.order.models import Tariffs, Orders
 from apps.v1.product.models import ProductRiskCategory
 from apps.v1.order.integrations.advanced_payment_assessment import (
-    get_application, get_products_in_grist, get_counterparties_in_grist
+    get_application, get_products_in_grist, get_counterparties_in_grist, post_to_grist_application
 )
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -472,6 +472,178 @@ def check_user_has_application(user, applications):
 
         return (False, None)
 
+def get_latest_application_by_counterparty(applications, counterparty_id):
+    """
+    Get the latest application for a counterparty_id
+    Returns the application with the highest id (latest) or None
+    """
+    if not applications or not counterparty_id:
+        return None
+    
+    matching_apps = []
+    for app in applications:
+        app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+        if app_counterparty_id == counterparty_id:
+            matching_apps.append(app)
+    
+    if not matching_apps:
+        return None
+    
+    # Sort by id (highest = latest) and return the first one
+    matching_apps.sort(key=lambda x: x.get('id', 0), reverse=True)
+    return matching_apps[0]
+
+def are_all_today_applications_accepted(applications, counterparty_id):
+    """
+    Check if all today's applications for a counterparty_id are "Accepted" or "Success"
+    Returns True if all are Accepted/Success, False otherwise
+    
+    Проверяет, все ли заявки на сегодня для counterparty_id имеют статус "Accepted" или "Success"
+    Возвращает True, если все Accepted/Success, иначе False
+    """
+    if not applications or not counterparty_id:
+        return False
+    
+    from datetime import datetime
+    from django.utils import timezone
+    import pytz
+    
+    # Get today's date at midnight UTC
+    today = datetime.now().date()
+    today_datetime = datetime.combine(today, datetime.min.time())
+    today_datetime_utc = timezone.make_aware(today_datetime, pytz.UTC)
+    today_timestamp = int(today_datetime_utc.timestamp())
+    
+    # Also check for date range (start and end of day)
+    today_start = today_timestamp
+    today_end = today_timestamp + 86400  # 24 hours in seconds
+    
+    today_apps = []
+    for app in applications:
+        app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+        app_date = app.get('fields', {}).get('date')
+        
+        if app_counterparty_id == counterparty_id and app_date:
+            # Handle different date formats from Grist
+            app_date_timestamp = None
+            if isinstance(app_date, (int, float)):
+                app_date_timestamp = int(app_date)
+            elif isinstance(app_date, str):
+                try:
+                    from datetime import datetime as dt
+                    parsed_date = dt.strptime(app_date, "%Y-%m-%d").date()
+                    parsed_datetime = dt.combine(parsed_date, dt.min.time())
+                    parsed_datetime_utc = timezone.make_aware(parsed_datetime, pytz.UTC)
+                    app_date_timestamp = int(parsed_datetime_utc.timestamp())
+                except:
+                    pass
+            
+            # Check if date matches today (within the day range)
+            if app_date_timestamp and today_start <= app_date_timestamp < today_end:
+                today_apps.append(app)
+    
+    if not today_apps:
+        return False
+    
+    # Check if all today's applications are "Accepted" or "Success"
+    for app in today_apps:
+        stage = app.get('fields', {}).get('stage', '')
+        if stage not in ['Accepted', 'Success']:
+            return False
+    
+    return True
+
+def get_today_application_by_counterparty(applications, counterparty_id):
+    """
+    Get today's application for a counterparty_id
+    Returns the application for today's date or None
+    """
+    if not applications or not counterparty_id:
+        return None
+    
+    from datetime import datetime
+    from django.utils import timezone
+    import pytz
+    
+    # Get today's date at midnight UTC
+    today = datetime.now().date()
+    today_datetime = datetime.combine(today, datetime.min.time())
+    today_datetime_utc = timezone.make_aware(today_datetime, pytz.UTC)
+    today_timestamp = int(today_datetime_utc.timestamp())
+    
+    # Also check for date range (start and end of day)
+    today_start = today_timestamp
+    today_end = today_timestamp + 86400  # 24 hours in seconds
+    
+    matching_apps = []
+    for app in applications:
+        app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+        app_date = app.get('fields', {}).get('date')
+        
+        if app_counterparty_id == counterparty_id and app_date:
+            # Handle different date formats from Grist
+            app_date_timestamp = None
+            if isinstance(app_date, (int, float)):
+                app_date_timestamp = int(app_date)
+            elif isinstance(app_date, str):
+                try:
+                    from datetime import datetime as dt
+                    parsed_date = dt.strptime(app_date, "%Y-%m-%d").date()
+                    parsed_datetime = dt.combine(parsed_date, dt.min.time())
+                    parsed_datetime_utc = timezone.make_aware(parsed_datetime, pytz.UTC)
+                    app_date_timestamp = int(parsed_datetime_utc.timestamp())
+                except:
+                    pass
+            
+            # Check if date matches today (within the day range)
+            if app_date_timestamp and today_start <= app_date_timestamp < today_end:
+                matching_apps.append(app)
+    
+    if not matching_apps:
+        return None
+    
+    # Sort by id (highest = latest) and return the first one
+    matching_apps.sort(key=lambda x: x.get('id', 0), reverse=True)
+    return matching_apps[0]
+
+def get_grist_product_ids_from_request(product_list):
+    """
+    Get grist_product_ids from ProductIDs model using product_id and variation_id from request
+    Returns list of grist_product_ids
+    """
+    grist_product_ids = []
+    
+    for item in product_list:
+        product_id = item.get('product_id')
+        variation_id = item.get('variation_id')
+        
+        if not product_id:
+            continue
+        
+        try:
+            # Filter ProductIDs by product_id and variation_id
+            if variation_id:
+                product_id_obj = ProductIDs.objects.filter(
+                    product_id=product_id,
+                    variation_id=str(variation_id)
+                ).first()
+            else:
+                # If no variation_id, get first ProductIDs for this product
+                product_id_obj = ProductIDs.objects.filter(
+                    product_id=product_id
+                ).first()
+            
+            if product_id_obj and product_id_obj.grist_product_id:
+                try:
+                    grist_id = int(product_id_obj.grist_product_id)
+                    grist_product_ids.append(grist_id)
+                except (ValueError, TypeError):
+                    continue
+        except Exception:
+            continue
+    
+    return grist_product_ids
+
 def calculate_minimum_contribution_for_products(user, products_data, grist_product_map, applications, counterparty_id):
     """
     Calculate minimum_contribution for products based on user's approved applications
@@ -669,7 +841,8 @@ class CalculatePaymentScheduleView(APIView):
                         "total_advance_payment": openapi.Schema(type=openapi.TYPE_NUMBER, description="Первоначальный взнос"),
                         "total_every_month_payment": openapi.Schema(type=openapi.TYPE_NUMBER, description="Ежемесячный платеж"),
                         "minimum_contribution": openapi.Schema(type=openapi.TYPE_NUMBER, description="Минимальный взнос"),
-                        "ability_to_order": openapi.Schema(type=openapi.TYPE_BOOLEAN, description="Возможность оформить заказ (true если minimum_contribution <= total_advance_payment)"),
+                        "ability_to_order": openapi.Schema(type=openapi.TYPE_BOOLEAN, description="Возможность оформить заказ"),
+                        "status": openapi.Schema(type=openapi.TYPE_STRING, description="Статус заявки (New, Assessment, Accepted, Denied, Denied by client, Success)", x_nullable=True),
                         "monthly_payments": openapi.Schema(
                             type=openapi.TYPE_ARRAY,
                             items=openapi.Schema(
@@ -838,6 +1011,8 @@ class CalculatePaymentScheduleView(APIView):
                 monthly_payment_amount = 0
             
             minimum_contribution = 0
+            application_status = None
+            counterparty_id_for_response = None
             if user:
                 try:
                     # Use ThreadPoolExecutor for concurrent API calls
@@ -851,10 +1026,12 @@ class CalculatePaymentScheduleView(APIView):
                     applications = application_data.get('records', [])
                     grist_products = grist_products_data.get('records', [])
                     
-                    # Check if user has any application
-                    has_application, counterparty_id = check_user_has_application(user, applications)
+                    # Get counterparty_id
+                    counterparty_id = get_user_counterparty_id(user)
+                    counterparty_id_for_response = counterparty_id
                     
-                    if has_application:
+                    if counterparty_id:
+                        # Build grist_product_map
                         grist_product_map = {}
                         for grist_product in grist_products:
                             grist_id = grist_product.get('id')
@@ -862,14 +1039,177 @@ class CalculatePaymentScheduleView(APIView):
                             if grist_id and price_category_id:
                                 grist_product_map[grist_id] = price_category_id
                         
-                        # Calculate minimum_contribution using the new helper function
-                        minimum_contribution = calculate_minimum_contribution_for_products(
-                            user, products_data, grist_product_map, applications, counterparty_id
-                        )
-                    # If user doesn't have application, minimum_contribution stays 0
+                        # First check for today's application
+                        today_app = get_today_application_by_counterparty(applications, counterparty_id)
+                        
+                        if today_app:
+                            # Use today's application
+                            today_stage = today_app.get('fields', {}).get('stage', '')
+                            application_status = today_stage
+                            
+                            # Calculate minimum_contribution based on status
+                            if today_stage in ['Accepted', 'Denied']:
+                                risk_category_id = today_app.get('fields', {}).get('risk_category_id')
+                                if risk_category_id:
+                                    # Calculate minimum_contribution for all products
+                                    for prod_data in products_data:
+                                        product = prod_data['product']
+                                        quantity = prod_data['quantity']
+                                        product_price = prod_data['price']
+                                        product_id_obj = ProductIDs.objects.filter(product=product).first()
+                                        grist_product_id = product_id_obj.grist_product_id if product_id_obj else None
+                                        
+                                        if grist_product_id:
+                                            try:
+                                                grist_product_id = int(grist_product_id)
+                                                if grist_product_id in grist_product_map:
+                                                    price_category_id = grist_product_map[grist_product_id]
+                                                    
+                                                    try:
+                                                        product_risk_category = ProductRiskCategory.objects.get(
+                                                            grist_risk_category_id=str(risk_category_id),
+                                                            grist_price_category_id=str(price_category_id)
+                                                        )
+                                                        percentage = product_risk_category.percentage or 0
+                                                        product_total = product_price * quantity
+                                                        contribution = product_total * percentage
+                                                        minimum_contribution += contribution
+                                                    except (ProductRiskCategory.DoesNotExist, Exception):
+                                                        pass
+                                            except (ValueError, TypeError):
+                                                pass
+                            elif today_stage in ['Assessment', 'New']:
+                                minimum_contribution = 0
+                            elif today_stage == 'Denied by client':
+                                minimum_contribution = 0
+                            
+                            # Create new application only if today's status is "Accepted" or "Success"
+                            # AND all today's applications are "Accepted" or "Success"
+                            # If status is "New" or "Assessment", don't create new one
+                            # Создавать новую заявку только если статус сегодняшней заявки "Accepted" или "Success"
+                            # И все сегодняшние заявки имеют статус "Accepted" или "Success"
+                            # Если статус "New" или "Assessment", не создавать новую
+                            if today_stage in ['Accepted', 'Success'] and are_all_today_applications_accepted(applications, counterparty_id):
+                                # Get grist_product_ids from request
+                                grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                
+                                # Convert grist_product_ids to product_ids from Price table
+                                from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                
+                                # Get risk_category_id from today's app
+                                risk_category_id = today_app.get('fields', {}).get('risk_category_id')
+                                
+                                # Create application in grist
+                                try:
+                                    current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                    
+                                    result = post_to_grist_application(
+                                        counterparty_id=counterparty_id,
+                                        date=current_date_str,
+                                        stage='New',
+                                        risk_category_id=risk_category_id,
+                                        issue_limit=float(total_down_payment),
+                                        products=product_ids_for_application
+                                    )
+                                    
+                                    if result:
+                                        # IMPORTANT: After creating new application, return "New" status
+                                        application_status = 'New'
+                                except Exception as e:
+                                    import logging
+                                    logger = logging.getLogger(__name__)
+                                    logger.error(f"Error creating application (mode 1): {str(e)}")
+                        else:
+                            # No application for today, check latest application to get risk_category_id
+                            latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
+                            
+                            if latest_app:
+                                latest_stage = latest_app.get('fields', {}).get('stage', '')
+                                application_status = latest_stage
+                                
+                                # Calculate minimum_contribution based on status
+                                if latest_stage in ['Accepted', 'Denied']:
+                                    risk_category_id = latest_app.get('fields', {}).get('risk_category_id')
+                                    if risk_category_id:
+                                        # Calculate minimum_contribution for all products
+                                        for prod_data in products_data:
+                                            product = prod_data['product']
+                                            quantity = prod_data['quantity']
+                                            product_price = prod_data['price']
+                                            product_id_obj = ProductIDs.objects.filter(product=product).first()
+                                            grist_product_id = product_id_obj.grist_product_id if product_id_obj else None
+                                            
+                                            if grist_product_id:
+                                                try:
+                                                    grist_product_id = int(grist_product_id)
+                                                    if grist_product_id in grist_product_map:
+                                                        price_category_id = grist_product_map[grist_product_id]
+                                                        
+                                                        try:
+                                                            product_risk_category = ProductRiskCategory.objects.get(
+                                                                grist_risk_category_id=str(risk_category_id),
+                                                                grist_price_category_id=str(price_category_id)
+                                                            )
+                                                            percentage = product_risk_category.percentage or 0
+                                                            product_total = product_price * quantity
+                                                            contribution = product_total * percentage
+                                                            minimum_contribution += contribution
+                                                        except (ProductRiskCategory.DoesNotExist, Exception):
+                                                            pass
+                                                except (ValueError, TypeError):
+                                                    pass
+                                elif latest_stage in ['Assessment', 'New']:
+                                    minimum_contribution = 0
+                                elif latest_stage == 'Denied by client':
+                                    minimum_contribution = 0
+                                
+                                # Only create new application if latest stage is "Accepted" or "Success"
+                                if latest_stage in ['Accepted', 'Success']:
+                                    # Get grist_product_ids from request (these are Price table record ids)
+                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    
+                                    # Convert grist_product_ids to product_ids from Price table
+                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    
+                                    # Get risk_category_id from latest app
+                                    risk_category_id = latest_app.get('fields', {}).get('risk_category_id')
+                                    
+                                    # Create application in grist
+                                    try:
+                                        current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                        
+                                        result = post_to_grist_application(
+                                            counterparty_id=counterparty_id,
+                                            date=current_date_str,
+                                            stage='New',
+                                            risk_category_id=risk_category_id,
+                                            issue_limit=float(total_down_payment),
+                                            products=product_ids_for_application
+                                        )
+                                        
+                                        if result:
+                                            # IMPORTANT: After creating new application, return "New" status
+                                            application_status = 'New'
+                                    except Exception as e:
+                                        import logging
+                                        logger = logging.getLogger(__name__)
+                                        logger.error(f"Error creating application (mode 1): {str(e)}")
+                            else:
+                                # No application found at all
+                                application_status = None
+                                minimum_contribution = 0
+                    else:
+                        # No counterparty_id, can't create application
+                        application_status = None
+                        minimum_contribution = 0
                 except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error in CalculatePaymentScheduleView (mode 1): {str(e)}, Type: {type(e).__name__}")
                     minimum_contribution = 0
-                    has_application = False
+                    application_status = None
             
             current_date = datetime.now()
             
@@ -912,6 +1252,7 @@ class CalculatePaymentScheduleView(APIView):
             counterparty_id = None
             grist_product_map = {}
             applications = []
+            application_status = None
             
             if user:
                 try:
@@ -926,16 +1267,31 @@ class CalculatePaymentScheduleView(APIView):
                     applications = application_data.get('records', [])
                     grist_products = grist_products_data.get('records', [])
                     
-                    # Check if user has any application
-                    has_application, counterparty_id = check_user_has_application(user, applications)
+                    # Get counterparty_id
+                    counterparty_id = get_user_counterparty_id(user)
+                    counterparty_id_for_response = counterparty_id
                     
-                    if has_application:
-                        for grist_product in grist_products:
-                            grist_id = grist_product.get('id')
-                            price_category_id = grist_product.get('fields', {}).get('price_category_id')
-                            if grist_id and price_category_id:
-                                grist_product_map[grist_id] = price_category_id
-                except:
+                    # Build grist_product_map
+                    for grist_product in grist_products:
+                        grist_id = grist_product.get('id')
+                        price_category_id = grist_product.get('fields', {}).get('price_category_id')
+                        if grist_id and price_category_id:
+                            grist_product_map[grist_id] = price_category_id
+                    
+                    if counterparty_id:
+                        # Get latest application for this counterparty_id
+                        latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
+                        
+                        if latest_app:
+                            has_application = True
+                            application_status = latest_app.get('fields', {}).get('stage', '')
+                        else:
+                            has_application = False
+                            application_status = None
+                    else:
+                        has_application = False
+                        application_status = None
+                except Exception:
                     pass
             
             for item in product_list:
@@ -1074,70 +1430,7 @@ class CalculatePaymentScheduleView(APIView):
                     merged_payments[month_num]['amount'] += product_monthly_payment
                     max_months = max(max_months, month_num)
                 
-                # Calculate minimum_contribution for this product
-                # Only calculate if user has application
-
-                if has_application and counterparty_id:
-                    try:
-                        # Filter applications by counterparty_id and check for Accepted stage
-                        approved_applications = []
-                        for app in applications:
-                            app_counterparty_id = app.get('fields', {}).get('counterparty_id')
-                            app_stage = app.get('fields', {}).get('stage', '')
-                            # Only accept "Accepted" stage
-                            if app_counterparty_id == counterparty_id and app_stage == 'Accepted':
-                                approved_applications.append(app)
-
-                        if approved_applications:
-                            # Get risk_category_id from approved applications
-                            risk_category_id = None
-                            product_id_obj = ProductIDs.objects.filter(product=product).first()
-                            grist_product_id = product_id_obj.grist_product_id if product_id_obj and product_id_obj.grist_product_id else None
-                            
-                            # First, try to find matching product in app_products
-                            product_found = False
-                            if grist_product_id:
-                                try:
-                                    grist_product_id = int(grist_product_id)
-                                except (ValueError, TypeError):
-                                    pass
-                                
-                                if grist_product_id:
-                                    for app in approved_applications:
-                                        app_products = app.get('fields', {}).get('products', [])
-                                        if grist_product_id in app_products:
-                                            risk_category_id = app.get('fields', {}).get('risk_category_id')
-                                            product_found = True
-                                            break
-                            
-                            # If no product match found but application exists, use its risk_category_id anyway
-                            if not product_found and approved_applications:
-                                risk_category_id = approved_applications[0].get('fields', {}).get('risk_category_id')
-
-                            if risk_category_id:
-                                if grist_product_id and grist_product_id in grist_product_map:
-                                    price_category_id = grist_product_map[grist_product_id]
-                                    
-                                    if price_category_id:
-                                        try:
-
-                                            product_risk_category = ProductRiskCategory.objects.get(
-                                                grist_risk_category_id=str(risk_category_id),
-                                                grist_price_category_id=str(price_category_id)
-                                            )
-                                            percentage = product_risk_category.percentage or 0
-                                            contribution = product_total * percentage
-                                            minimum_contribution += contribution
-
-                                        except ProductRiskCategory.DoesNotExist:
-
-                                            pass
-                                else:
-                                    pass
-                    except Exception:
-                        pass
-                else:
-                    pass
+                # Calculate minimum_contribution for this product will be done after loop
             
             monthly_payments = []
             for month_num in sorted(merged_payments.keys()):
@@ -1148,14 +1441,251 @@ class CalculatePaymentScheduleView(APIView):
                 })
             
             monthly_payment_amount = merged_payments.get(1, {}).get('amount', 0) if merged_payments else 0
+            
+            # Handle application logic for mode 2
+            if user and counterparty_id:
+                try:
+                    # First check for today's application
+                    today_app = get_today_application_by_counterparty(applications, counterparty_id)
+                    
+                    if today_app:
+                        # Use today's application
+                        today_stage = today_app.get('fields', {}).get('stage', '')
+                        application_status = today_stage
+                        
+                        # Calculate minimum_contribution based on status
+                        if today_stage in ['Accepted', 'Denied']:
+                            # Calculate minimum_contribution
+                            risk_category_id = today_app.get('fields', {}).get('risk_category_id')
+                            if risk_category_id:
+                                # Calculate minimum_contribution for all products
+                                for item in product_list:
+                                    product_id = item.get('product_id')
+                                    quantity = item.get('quantity', 1)
+                                    variation_id = item.get('variation_id')
+                                    
+                                    try:
+                                        product = Products.objects.get(id=product_id)
+                                        product_id_obj = ProductIDs.objects.filter(
+                                            product=product,
+                                            variation_id=str(variation_id) if variation_id else None
+                                        ).first()
+                                        
+                                        if not product_id_obj and variation_id is None:
+                                            product_id_obj = ProductIDs.objects.filter(product=product).first()
+                                        
+                                        grist_product_id = product_id_obj.grist_product_id if product_id_obj else None
+                                        
+                                        if grist_product_id:
+                                            try:
+                                                grist_product_id = int(grist_product_id)
+                                                if grist_product_id in grist_product_map:
+                                                    price_category_id = grist_product_map[grist_product_id]
+                                                    
+                                                    try:
+                                                        product_risk_category = ProductRiskCategory.objects.get(
+                                                            grist_risk_category_id=str(risk_category_id),
+                                                            grist_price_category_id=str(price_category_id)
+                                                        )
+                                                        percentage = product_risk_category.percentage or 0
+                                                        
+                                                        # Get product price
+                                                        product_price = None
+                                                        if variation_id:
+                                                            product_id_obj_var = ProductIDs.objects.filter(
+                                                                product=product, variation_id=str(variation_id)
+                                                            ).first()
+                                                            if product_id_obj_var:
+                                                                # Find price from details
+                                                                details = product.details.all()
+                                                                for detail in details:
+                                                                    if detail.price:
+                                                                        product_price = float(detail.price)
+                                                                        break
+                                                        
+                                                        if product_price is None:
+                                                            product_price = float(product.price) if product.price else 0
+                                                        
+                                                        product_total = product_price * quantity
+                                                        contribution = product_total * percentage
+                                                        minimum_contribution += contribution
+                                                    except (ProductRiskCategory.DoesNotExist, Exception):
+                                                        pass
+                                            except (ValueError, TypeError):
+                                                pass
+                                    except Products.DoesNotExist:
+                                        pass
+                        elif today_stage == 'Denied by client':
+                            minimum_contribution = 0
+                        elif today_stage in ['Assessment', 'New']:
+                            minimum_contribution = 0
+                        
+                        # Create new application only if today's status is "Accepted" or "Success"
+                        # AND all today's applications are "Accepted" or "Success"
+                        # If status is "New" or "Assessment", don't create new one
+                        # Создавать новую заявку только если статус сегодняшней заявки "Accepted" или "Success"
+                        # И все сегодняшние заявки имеют статус "Accepted" или "Success"
+                        # Если статус "New" или "Assessment", не создавать новую
+                        if today_stage in ['Accepted', 'Success'] and are_all_today_applications_accepted(applications, counterparty_id):
+                            # Get grist_product_ids from request
+                            grist_product_ids = get_grist_product_ids_from_request(product_list)
+                            
+                            # Convert grist_product_ids to product_ids from Price table
+                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                            
+                            risk_category_id = today_app.get('fields', {}).get('risk_category_id')
+                            current_date_str = datetime.now().strftime("%Y-%m-%d")
+                            
+                            # Calculate total_advance_payment for mode 2
+                            total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                            
+                            try:
+                                result = post_to_grist_application(
+                                    counterparty_id=counterparty_id,
+                                    date=current_date_str,
+                                    stage='New',
+                                    risk_category_id=risk_category_id,
+                                    issue_limit=float(total_advance_payment_mode2),
+                                    products=product_ids_for_application
+                                )
+                                
+                                if result:
+                                    # IMPORTANT: After creating new application, return "New" status
+                                    application_status = 'New'
+                            except Exception as e:
+                                import logging
+                                logger = logging.getLogger(__name__)
+                                logger.error(f"Error creating application (mode 2): {str(e)}")
+                    else:
+                        # No application for today, check latest application to get risk_category_id
+                        latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
+                        
+                        if latest_app:
+                            latest_stage = latest_app.get('fields', {}).get('stage', '')
+                            application_status = latest_stage
+                            
+                            # Only create new application if latest stage is "Accepted" or "Success"
+                            should_create_application = latest_stage in ['Accepted', 'Success']
+                            
+                            # Calculate minimum_contribution based on status
+                            if latest_stage in ['Accepted', 'Denied']:
+                                # Calculate minimum_contribution
+                                risk_category_id = latest_app.get('fields', {}).get('risk_category_id')
+                            
+                            if risk_category_id:
+                                for item in product_list:
+                                    product_id = item.get('product_id')
+                                    quantity = item.get('quantity', 1)
+                                    variation_id = item.get('variation_id')
+                                    
+                                    try:
+                                        product = Products.objects.get(id=product_id)
+                                        product_id_obj = ProductIDs.objects.filter(
+                                            product=product,
+                                            variation_id=str(variation_id) if variation_id else None
+                                        ).first()
+                                        
+                                        if not product_id_obj and variation_id is None:
+                                            product_id_obj = ProductIDs.objects.filter(product=product).first()
+                                        
+                                        grist_product_id = product_id_obj.grist_product_id if product_id_obj else None
+                                        
+                                        if grist_product_id:
+                                            try:
+                                                grist_product_id = int(grist_product_id)
+                                                if grist_product_id in grist_product_map:
+                                                    price_category_id = grist_product_map[grist_product_id]
+                                                    
+                                                    try:
+                                                        product_risk_category = ProductRiskCategory.objects.get(
+                                                            grist_risk_category_id=str(risk_category_id),
+                                                            grist_price_category_id=str(price_category_id)
+                                                        )
+                                                        percentage = product_risk_category.percentage or 0
+                                                        
+                                                        # Get product price
+                                                        product_price = None
+                                                        if variation_id:
+                                                            product_id_obj_var = ProductIDs.objects.filter(
+                                                                product=product, variation_id=str(variation_id)
+                                                            ).first()
+                                                            if product_id_obj_var:
+                                                                details = product.details.all()
+                                                                for detail in details:
+                                                                    if detail.price:
+                                                                        product_price = float(detail.price)
+                                                                        break
+                                                        
+                                                        if product_price is None:
+                                                            product_price = float(product.price) if product.price else 0
+                                                        
+                                                        product_total = product_price * quantity
+                                                        contribution = product_total * percentage
+                                                        minimum_contribution += contribution
+                                                    except (ProductRiskCategory.DoesNotExist, Exception):
+                                                        pass
+                                            except (ValueError, TypeError):
+                                                pass
+                                    except Products.DoesNotExist:
+                                        pass
+                            elif latest_stage == 'Denied by client':
+                                minimum_contribution = 0
+                            elif latest_stage in ['Assessment', 'New']:
+                                minimum_contribution = 0
+                            
+                            # Create new application only if latest stage is Accepted or Success
+                            if should_create_application:
+                                try:
+                                    # Get grist_product_ids from request (these are Price table record ids)
+                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    
+                                    # Convert grist_product_ids to product_ids from Price table
+                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    
+                                    risk_category_id = latest_app.get('fields', {}).get('risk_category_id')
+                                    current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                    
+                                    # Calculate total_advance_payment for mode 2
+                                    total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                    
+                                    result = post_to_grist_application(
+                                        counterparty_id=counterparty_id,
+                                        date=current_date_str,
+                                        stage='New',
+                                        risk_category_id=risk_category_id,
+                                        issue_limit=float(total_advance_payment_mode2),
+                                        products=product_ids_for_application
+                                    )
+                                    
+                                    if result:
+                                        # IMPORTANT: After creating new application, return "New" status
+                                        application_status = 'New'
+                                except Exception as e:
+                                    import logging
+                                    logger = logging.getLogger(__name__)
+                                    logger.error(f"Error creating application (mode 2): {str(e)}")
+                        else:
+                            # No application found, don't create (only create if latest is Accepted or Success)
+                            application_status = None
+                            minimum_contribution = 0
+                except Exception:
+                    application_status = None
+                    minimum_contribution = 0
         
-        # ability_to_order logic:
-        # - If user doesn't have application: minimum_contribution = 0, ability_to_order = True
-        # - If user has application: ability_to_order = total_down_payment >= minimum_contribution
-        if has_application:
-            ability_to_order = float(total_down_payment) >= minimum_contribution
+        # ability_to_order logic: Only True if status is "Accepted"
+        if application_status == 'Accepted':
+            # Check if total_down_payment meets minimum_contribution requirement
+            if calculation_mode == 1:
+                ability_to_order = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
+            elif calculation_mode == 2:
+                ability_to_order = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
+            else:
+                ability_to_order = True
         else:
-            ability_to_order = True
+            # For all other statuses (New, Assessment, Denied, Denied by client, None, etc.), ability_to_order is False
+            ability_to_order = False
         
         response_product_list = []
         
@@ -1207,6 +1737,8 @@ class CalculatePaymentScheduleView(APIView):
             "total_every_month_payment": monthly_payment_amount,
             "minimum_contribution": round(minimum_contribution, 2),
             "ability_to_order": ability_to_order,
+            "status": application_status,
+            "counterparty_id": counterparty_id_for_response,
             "monthly_payments": monthly_payments,
             "product_list": response_product_list
         }
