@@ -31,7 +31,7 @@ class CustomUserAdmin(UserAdmin):
     ordering = ('-created_at',)
     
     fieldsets = (
-        (None, {'fields': ('phone_number', 'password')}),
+        (None, {'fields': ('phone_number')}),
         ('Личная информация', {'fields': ('first_name', 'last_name', 'date_of_birth', 'avatar', 'address', 'pnfl', 'is_veriifed_my_id')}),
         ('Адрес', {'fields': ('city', 'street', 'house', 'apartment', 'postal_index')}),
         ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
