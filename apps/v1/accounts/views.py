@@ -6,6 +6,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 from datetime import timedelta
 import random
+import re
 
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -665,10 +666,22 @@ class VerifyMyIDDataView(APIView):
         }
     )
     def get(self, request):
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"[VerifyMyIDDataView] ========================================")
+        logger.debug(f"[VerifyMyIDDataView] ===== REQUEST START =====")
+        logger.debug(f"[VerifyMyIDDataView] ========================================")
+        
         code = request.query_params.get('code')
         access_token = request.query_params.get('token')
         
+        logger.debug(f"[VerifyMyIDDataView] Received parameters:")
+        logger.debug(f"[VerifyMyIDDataView] - code: {code}")
+        logger.debug(f"[VerifyMyIDDataView] - token: {access_token[:50] if access_token else None}...")
+        
         if not code or not access_token:
+            logger.warning(f"[VerifyMyIDDataView] Missing parameters: code={code}, token={'present' if access_token else 'missing'}")
             return Response(
                 {
                     "success": False,
@@ -678,25 +691,56 @@ class VerifyMyIDDataView(APIView):
             )
         
         # Получаем данные пользователя из MyID
+        logger.debug(f"[VerifyMyIDDataView] Calling get_user_data with code={code}")
         user_data_result = get_user_data(access_token, code)
         
+        logger.debug(f"[VerifyMyIDDataView] get_user_data result:")
+        logger.debug(f"[VerifyMyIDDataView] - success: {user_data_result.get('success')}")
+        logger.debug(f"[VerifyMyIDDataView] - status_code: {user_data_result.get('status_code')}")
+        logger.debug(f"[VerifyMyIDDataView] - error: {user_data_result.get('error')}")
+        
         if not user_data_result.get("success"):
+            error = user_data_result.get("error")
+            error_detail = user_data_result.get("error_detail", {})
+            error_code = error_detail.get("err") if isinstance(error_detail, dict) else None
+            error_message = error_detail.get("detail") if isinstance(error_detail, dict) else None
+            
+            logger.error(f"[VerifyMyIDDataView] Failed to get user data from MyID: {error}")
+            logger.error(f"[VerifyMyIDDataView] Error detail: {error_detail}")
+            
+            # Более понятное сообщение об ошибке
+            if error_code == "AUC001" or (error_message and "Code not found" in str(error_message)):
+                user_message = "Код не найден или истек срок действия. Пожалуйста, создайте новую сессию и повторите идентификацию."
+            else:
+                user_message = "Не удалось получить данные из MyID"
+            
             return Response(
                 {
                     "success": False,
-                    "message": "Не удалось получить данные из MyID",
-                    "error": user_data_result.get("error")
+                    "message": user_message,
+                    "error": error,
+                    "error_code": error_code,
+                    "error_detail": error_message
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_400_BAD_REQUEST if error_code == "AUC001" else status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
         myid_data = user_data_result.get("data", {})
+        logger.debug(f"[VerifyMyIDDataView] MyID data keys: {list(myid_data.keys())}")
+        
         profile = myid_data.get("data", {}).get("profile", {})
+        logger.debug(f"[VerifyMyIDDataView] Profile keys: {list(profile.keys())}")
+        
         common_data = profile.get("common_data", {})
         doc_data = profile.get("doc_data", {})
         contacts = profile.get("contacts", {})
         address_data = profile.get("address", {})
         permanent_registration = address_data.get("permanent_registration", {})
+        
+        logger.debug(f"[VerifyMyIDDataView] Extracted data:")
+        logger.debug(f"[VerifyMyIDDataView] - contacts: {contacts}")
+        logger.debug(f"[VerifyMyIDDataView] - common_data: {common_data}")
+        logger.debug(f"[VerifyMyIDDataView] - doc_data: {doc_data}")
         
         # Извлекаем данные
         phone = contacts.get("phone", "")
@@ -707,49 +751,116 @@ class VerifyMyIDDataView(APIView):
         birth_date_str = common_data.get("birth_date", "")
         pass_data = doc_data.get("pass_data", "")
         
+        logger.debug(f"[VerifyMyIDDataView] Extracted values:")
+        logger.debug(f"[VerifyMyIDDataView] - phone (raw): {phone}")
+        logger.debug(f"[VerifyMyIDDataView] - first_name: {first_name}")
+        logger.debug(f"[VerifyMyIDDataView] - last_name: {last_name}")
+        logger.debug(f"[VerifyMyIDDataView] - pinfl: {pinfl}")
+        logger.debug(f"[VerifyMyIDDataView] - birth_date: {birth_date_str}")
+        logger.debug(f"[VerifyMyIDDataView] - pass_data: {pass_data}")
+        
         # Адрес
         address = permanent_registration.get("address", "")
         region = permanent_registration.get("region", "")
         country = permanent_registration.get("country", "")
         
-        # Ищем пользователя по номеру телефона
-        try:
-            user = CustomUser.objects.get(phone_number=phone)
-        except CustomUser.DoesNotExist:
+        # Нормализуем номер телефона (удаляем пробелы, дефисы, плюсы)
+        phone_original = phone
+        if phone:
+            phone = re.sub(r'[\s\-\+]', '', phone)
+            logger.debug(f"[VerifyMyIDDataView] Phone normalized: '{phone_original}' -> '{phone}'")
+        
+        if not phone:
+            logger.warning(f"[VerifyMyIDDataView] Phone number is empty after extraction")
             return Response(
                 {
                     "success": False,
-                    "message": "Пользователь не найден"
+                    "message": "Номер телефона не найден в данных MyID"
                 },
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Ищем пользователя по номеру телефона
+        logger.debug(f"[VerifyMyIDDataView] Searching for user with phone_number='{phone}'")
+        try:
+            user = CustomUser.objects.get(phone_number=phone)
+            logger.debug(f"[VerifyMyIDDataView] User found by phone_number: user_id={user.id}, username={user.username}")
+        except CustomUser.DoesNotExist:
+            logger.warning(f"[VerifyMyIDDataView] User not found by phone_number='{phone}'")
+            # Пробуем найти пользователя по PINFL, если номер телефона не найден
+            if pinfl:
+                logger.debug(f"[VerifyMyIDDataView] Trying to find user by PINFL='{pinfl}'")
+                try:
+                    user = CustomUser.objects.get(pnfl=pinfl)
+                    logger.debug(f"[VerifyMyIDDataView] User found by PINFL: user_id={user.id}, username={user.username}, phone_number={user.phone_number}")
+                    # Обновляем номер телефона, если он был пустым
+                    if not user.phone_number:
+                        logger.debug(f"[VerifyMyIDDataView] Updating user phone_number from None to '{phone}'")
+                        user.phone_number = phone
+                        user.save()
+                except CustomUser.DoesNotExist:
+                    logger.error(f"[VerifyMyIDDataView] User not found by PINFL='{pinfl}' either")
+                    return Response(
+                        {
+                            "success": False,
+                            "message": "Пользователь не найден",
+                            "debug": {
+                                "phone_searched": phone,
+                                "pinfl_searched": pinfl
+                            }
+                        },
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                logger.error(f"[VerifyMyIDDataView] PINFL not available, cannot search by PINFL")
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Пользователь не найден",
+                        "debug": {
+                            "phone_searched": phone
+                        }
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
         # Обновляем данные пользователя
+        logger.debug(f"[VerifyMyIDDataView] Updating user data...")
         if first_name:
             user.first_name = first_name
+            logger.debug(f"[VerifyMyIDDataView] - Updated first_name: {first_name}")
         if last_name:
             user.last_name = last_name
+            logger.debug(f"[VerifyMyIDDataView] - Updated last_name: {last_name}")
         if pinfl:
             user.pnfl = pinfl
+            logger.debug(f"[VerifyMyIDDataView] - Updated pnfl: {pinfl}")
         if birth_date_str:
             try:
                 from datetime import datetime
                 birth_date = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
                 user.date_of_birth = birth_date
-            except:
-                pass
+                logger.debug(f"[VerifyMyIDDataView] - Updated date_of_birth: {birth_date}")
+            except Exception as e:
+                logger.warning(f"[VerifyMyIDDataView] - Failed to parse birth_date '{birth_date_str}': {str(e)}")
         if address:
             user.address = address
+            logger.debug(f"[VerifyMyIDDataView] - Updated address: {address}")
         if country:
             user.country = country
+            logger.debug(f"[VerifyMyIDDataView] - Updated country: {country}")
         if region:
             user.region = region
+            logger.debug(f"[VerifyMyIDDataView] - Updated region: {region}")
         
         # Устанавливаем флаг верификации
         user.is_veriifed_my_id = True
+        logger.debug(f"[VerifyMyIDDataView] - Setting is_veriifed_my_id = True")
         user.save()
+        logger.debug(f"[VerifyMyIDDataView] User saved successfully")
         
         # Отправляем данные в Grist
+        logger.debug(f"[VerifyMyIDDataView] Posting data to Grist...")
         try:
             post_to_grist_counterparties(
                 first_name=first_name or "",
@@ -761,13 +872,15 @@ class VerifyMyIDDataView(APIView):
                 phone=phone or "",
                 passport_series=pass_data or ""
             )
+            logger.debug(f"[VerifyMyIDDataView] Data posted to Grist successfully")
         except Exception as e:
-            # Логируем ошибку, но не прерываем процесс
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Error posting to Grist: {str(e)}")
+            logger.error(f"[VerifyMyIDDataView] Error posting to Grist: {str(e)}")
         
         user_data = UserSerializer(user).data
+        
+        logger.debug(f"[VerifyMyIDDataView] ===== REQUEST SUCCESS =====")
+        logger.debug(f"[VerifyMyIDDataView] Returning user data for user_id={user.id}")
+        logger.debug(f"[VerifyMyIDDataView] ========================================")
         
         return Response(
             {

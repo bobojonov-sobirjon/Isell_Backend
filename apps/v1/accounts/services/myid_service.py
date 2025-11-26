@@ -144,19 +144,61 @@ def get_user_data(access_token, code):
         "code": code
     }
     
+    logger.debug(f"[get_user_data] ===== STARTING =====")
+    logger.debug(f"[get_user_data] URL: {url}")
+    logger.debug(f"[get_user_data] Code: {code}")
+    logger.debug(f"[get_user_data] Access token (first 50 chars): {access_token[:50] if access_token else None}...")
+    logger.debug(f"[get_user_data] Params: {params}")
+    
     try:
-        response = requests.get(url, params=params, headers=headers)
+        logger.debug(f"[get_user_data] Making GET request to MyID API...")
+        response = requests.get(url, params=params, headers=headers, timeout=30)
+        
+        logger.debug(f"[get_user_data] Response status code: {response.status_code}")
+        logger.debug(f"[get_user_data] Response headers: {dict(response.headers)}")
+        
         response.raise_for_status()
         
+        response_data = response.json()
+        logger.debug(f"[get_user_data] Response data keys: {list(response_data.keys()) if isinstance(response_data, dict) else 'Not a dict'}")
+        logger.debug(f"[get_user_data] Response data (first 500 chars): {str(response_data)[:500]}")
+        
+        logger.debug(f"[get_user_data] ===== SUCCESS =====")
         return {
             "success": True,
-            "data": response.json(),
+            "data": response_data,
             "status_code": response.status_code
         }
+    except requests.exceptions.HTTPError as e:
+        error_detail = None
+        try:
+            error_detail = response.json()
+            logger.error(f"[get_user_data] HTTP Error: {e}, Status: {response.status_code}, Detail: {error_detail}")
+        except:
+            error_detail = response.text
+            logger.error(f"[get_user_data] HTTP Error: {e}, Status: {response.status_code}, Detail (text): {error_detail[:500]}")
+        
+        logger.error(f"[get_user_data] ===== HTTP ERROR =====")
+        return {
+            "success": False,
+            "error": str(e),
+            "error_detail": error_detail,
+            "status_code": response.status_code if 'response' in locals() else None
+        }
     except requests.exceptions.RequestException as e:
+        logger.error(f"[get_user_data] Request Exception: {str(e)}")
+        logger.error(f"[get_user_data] ===== REQUEST ERROR =====")
         return {
             "success": False,
             "error": str(e),
             "status_code": response.status_code if 'response' in locals() else None
+        }
+    except Exception as e:
+        logger.error(f"[get_user_data] Unexpected error: {str(e)}")
+        logger.error(f"[get_user_data] ===== UNEXPECTED ERROR =====")
+        return {
+            "success": False,
+            "error": str(e),
+            "status_code": None
         }
 

@@ -263,6 +263,10 @@ class CalculateMonthlyPaymentView(APIView):
         
         **Формула:**
         monthly_payment = round((product.price - total_down_payment) * (tariff.coefficient / tariff.payments_count))
+        
+        **Логика определения цены:**
+        - Если передан variation_id: цена берется из ProductDetails (вариация продукта)
+        - Если variation_id не передан: цена берется из Product.price
         """,
         manual_parameters=[
             openapi.Parameter(
@@ -278,6 +282,13 @@ class CalculateMonthlyPaymentView(APIView):
                 description="ID тарифа (срок рассрочки)",
                 type=openapi.TYPE_INTEGER,
                 required=True
+            ),
+            openapi.Parameter(
+                'variation_id',
+                openapi.IN_QUERY,
+                description="ID вариации продукта (опционально). Если указан, цена берется из ProductDetails",
+                type=openapi.TYPE_INTEGER,
+                required=False
             ),
         ],
         responses={
@@ -301,6 +312,7 @@ class CalculateMonthlyPaymentView(APIView):
     def get(self, request, product_id):
         total_down_payment = request.query_params.get('advance_payment')
         installment_period = request.query_params.get('tariff')
+        variation_id = request.query_params.get('variation_id')
         
         if total_down_payment is None:
             return Response(
@@ -315,21 +327,62 @@ class CalculateMonthlyPaymentView(APIView):
             )
         
         product = get_object_or_404(
-            Products.objects.prefetch_related('details'),
+            Products.objects.prefetch_related('details', 'ids'),
             id=product_id
         )
         tariff = get_object_or_404(Tariffs, id=installment_period)
         
         product_price = None
         
-        if product.price is not None:
-            product_price = float(product.price)
-        else:
-            details = product.details.all()
-            if details.exists():
-                prices = [float(detail.price) for detail in details if detail.price is not None]
-                if prices:
-                    product_price = min(prices)
+        # Если передан variation_id, ищем цену в ProductDetails
+        if variation_id:
+            product_id_obj = ProductIDs.objects.filter(
+                product=product,
+                variation_id=str(variation_id)
+            ).first()
+            
+            if product_id_obj and product_id_obj.variation_name:
+                variation_name = product_id_obj.variation_name.upper()
+                details = product.details.all()
+                
+                for detail in details:
+                    color = detail.color or ""
+                    storage = detail.storage or ""
+                    sim = detail.sim or ""
+                    
+                    color_match = color.upper() in variation_name if color else False
+                    storage_match = storage.upper() in variation_name if storage else False
+                    
+                    sim_match = False
+                    if sim:
+                        sim_normalized = sim.replace("+", "").replace(" ", "").upper()
+                        if sim.upper() in variation_name:
+                            sim_match = True
+                        elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                            sim_match = True
+                        elif "SIM" in sim_normalized and "SIM" in variation_name:
+                            sim_match = True
+                        elif "DUAL" in sim_normalized and "DUAL" in variation_name:
+                            sim_match = True
+                        elif "ESIM" in sim_normalized and "ESIM" in variation_name:
+                            sim_match = True
+                    
+                    if color_match and storage_match and (sim_match if sim else True):
+                        if detail.price is not None:
+                            product_price = float(detail.price)
+                            break
+        
+        # Если variation_id не передан или не найден, берем цену из Product.price
+        if product_price is None:
+            if product.price is not None:
+                product_price = float(product.price)
+            else:
+                # Если в Product.price тоже нет, берем минимальную цену из details
+                details = product.details.all()
+                if details.exists():
+                    prices = [float(detail.price) for detail in details if detail.price is not None]
+                    if prices:
+                        product_price = min(prices)
         
         if product_price is None:
             return Response(
