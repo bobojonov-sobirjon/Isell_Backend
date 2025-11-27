@@ -523,6 +523,9 @@ async function initializeMYIDWebSDK() {
         elements.faceLoading.style.display = 'block';
         elements.myidIframeContainer.style.display = 'none';
         
+        // Get iframe element first (before using it)
+        const myidIframe = elements.myidIframe;
+        
         // Ensure iframe has proper permissions before loading
         // Don't set sandbox if we need camera access - sandbox blocks camera
         // Only set allow attribute for permissions
@@ -548,7 +551,6 @@ async function initializeMYIDWebSDK() {
         }, 100);
         
         // According to documentation, we need to send screen info to iframe
-        const myidIframe = elements.myidIframe;
         function screenChangeListener(e) {
             if (myidIframe.contentWindow) {
                 try {
