@@ -249,6 +249,15 @@ class ProductDetailView(APIView):
         
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+def get_tariff_coefficient_ratio(tariff):
+    """
+    Calculate tariff coefficient ratio safely, avoiding division by zero.
+    If coefficient or payments_count is 0, use 1 instead.
+    """
+    coefficient = tariff.coefficient if tariff.coefficient and tariff.coefficient > 0 else 1
+    payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
+    return coefficient / payments_count
+
 class CalculateMonthlyPaymentView(APIView):
     """
     View for calculating monthly payment based on product price, down payment, and tariff.
@@ -392,7 +401,7 @@ class CalculateMonthlyPaymentView(APIView):
         
         monthly_payment = round(
             (product_price - float(total_down_payment)) * 
-            (tariff.coefficient / tariff.payments_count)
+            get_tariff_coefficient_ratio(tariff)
         )
         
         response_data = [
@@ -1058,7 +1067,7 @@ class CalculatePaymentScheduleView(APIView):
             
             if total_product_sum > 0:
                 monthly_payment_amount = round(
-                    total_product_sum * (tariff.coefficient / tariff.payments_count)
+                    total_product_sum * get_tariff_coefficient_ratio(tariff)
                 )
             else:
                 monthly_payment_amount = 0
@@ -1267,7 +1276,8 @@ class CalculatePaymentScheduleView(APIView):
             current_date = datetime.now()
             
             if monthly_payment_amount > 0:
-                for month_num in range(1, tariff.payments_count + 1):
+                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
+                for month_num in range(1, safe_payments_count + 1):
                     year = current_date.year
                     month = current_date.month + month_num
                     day = current_date.day
@@ -1449,14 +1459,15 @@ class CalculatePaymentScheduleView(APIView):
                 
                 if product_remaining > 0:
                     product_monthly_payment = round(
-                        product_remaining * (tariff.coefficient / tariff.payments_count)
+                        product_remaining * get_tariff_coefficient_ratio(tariff)
                     )
                 else:
                     product_monthly_payment = 0
                 
                 current_date = datetime.now()
                 
-                for month_num in range(1, tariff.payments_count + 1):
+                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
+                for month_num in range(1, safe_payments_count + 1):
                     year = current_date.year
                     month = current_date.month + month_num
                     day = current_date.day
