@@ -1,11 +1,12 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 from datetime import timedelta
 import random
+import secrets
 import re
 from django.shortcuts import render
 
@@ -17,7 +18,8 @@ from apps.v1.accounts.serializers import (
     PhoneLoginSerializer, 
     VerifySMSCodeSerializer,
     UserSerializer,
-    MyIDSessionSerializer
+    MyIDSessionSerializer,
+    UserUpdateSerializer
 )
 from apps.v1.accounts.services import EskizSMSService
 from apps.v1.accounts.services.myid_service import get_access_token, create_session, get_user_data
@@ -94,15 +96,46 @@ class PhoneLoginView(APIView):
         
         phone_number = serializer.validated_data['phone_number']
         
-        user, created = CustomUser.objects.get_or_create(
-            phone_number=phone_number,
-            defaults={
-                'username': phone_number,
-                'is_active': True
-            }
-        )
+        try:
+            user = CustomUser.objects.get(phone_number=phone_number)
+            created = False
+        except CustomUser.DoesNotExist:
+            username_exists = CustomUser.objects.filter(username=phone_number).exists()
+            if username_exists:
+                import uuid
+                username = f"{phone_number}_{uuid.uuid4().hex[:8]}"
+            else:
+                username = phone_number
+            
+            try:
+                user = CustomUser.objects.create(
+                    phone_number=phone_number,
+                    username=username,
+                    is_active=True
+                )
+                created = True
+            except Exception as e:
+                import uuid
+                username = f"{phone_number}_{uuid.uuid4().hex[:8]}"
+                user = CustomUser.objects.create(
+                    phone_number=phone_number,
+                    username=username,
+                    is_active=True
+                )
+                created = True
+        else:
+            if not user.username or user.username != phone_number:
+                username_exists = CustomUser.objects.filter(username=phone_number).exclude(id=user.id).exists()
+                if not username_exists:
+                    try:
+                        user.username = phone_number
+                        user.save(update_fields=['username'])
+                    except Exception:
+                        pass
         
-        code = str(random.randint(1000, 9999))
+        SmsCode.objects.filter(user=user).delete()
+        
+        code = str(secrets.randbelow(9000) + 1000)
         expires_at = timezone.now() + timedelta(minutes=5)
         
         SmsCode.objects.create(
@@ -277,7 +310,6 @@ class VerifySMSCodeView(APIView):
             expires_at__lt=timezone.now()
         ).delete()
         
-        # Check if user is verified with MyID
         if not user.is_veriifed_my_id:
             return Response(
                 {
@@ -403,7 +435,7 @@ class ResendSMSCodeView(APIView):
         
         SmsCode.objects.filter(user=user).delete()
         
-        code = str(random.randint(1000, 9999))
+        code = str(secrets.randbelow(9000) + 1000)
         expires_at = timezone.now() + timedelta(minutes=5)
         
         SmsCode.objects.create(
@@ -518,7 +550,6 @@ class CreateMyIDSessionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Получаем access token
         token_result = get_access_token()
         if not token_result.get("success"):
             error_msg = token_result.get("error", "Unknown error")
@@ -545,7 +576,6 @@ class CreateMyIDSessionView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-        # Создаем сессию
         validated_data = serializer.validated_data
         birth_date = validated_data.get("birth_date")
         if birth_date:
@@ -691,7 +721,6 @@ class VerifyMyIDDataView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Получаем данные пользователя из MyID
         user_data_result = get_user_data(access_token, code)
         
         if not user_data_result.get("success"):
@@ -703,7 +732,6 @@ class VerifyMyIDDataView(APIView):
             logger.error(f"[VerifyMyIDDataView] Failed to get user data from MyID: {error}")
             logger.error(f"[VerifyMyIDDataView] Error detail: {error_detail}")
             
-            # Более понятное сообщение об ошибке
             if error_code == "AUC001" or (error_message and "Code not found" in str(error_message)):
                 user_message = "Код не найден или истек срок действия. Пожалуйста, создайте новую сессию и повторите идентификацию."
             else:
@@ -728,7 +756,6 @@ class VerifyMyIDDataView(APIView):
         address_data = profile.get("address", {})
         permanent_registration = address_data.get("permanent_registration", {})
         
-        # Извлекаем данные
         phone = contacts.get("phone", "")
         first_name = common_data.get("first_name", "")
         middle_name = common_data.get("middle_name", "")
@@ -737,64 +764,52 @@ class VerifyMyIDDataView(APIView):
         birth_date_str = common_data.get("birth_date", "")
         pass_data = doc_data.get("pass_data", "")
         
-        # Адрес
         address = permanent_registration.get("address", "")
         region = permanent_registration.get("region", "")
         country = permanent_registration.get("country", "")
         district = permanent_registration.get("district", "")
         
-        # Парсим адрес для извлечения city, street, house, apartment
         city = None
         street = None
         house = None
         apartment = None
         
         if address:
-            # Пример: "Бухарская область, Шафирканский район, Навбахор МСГ, Катта махалла, дом 65"
             address_parts = [part.strip() for part in address.split(',')]
             
-            # Ищем дом (обычно "дом XX" или "дом XX, квартира YY")
             for i, part in enumerate(address_parts):
                 if 'дом' in part.lower() or 'дом' in part:
-                    # Извлекаем номер дома
                     house_match = re.search(r'дом\s*(\d+)', part, re.IGNORECASE)
                     if house_match:
                         house = house_match.group(1)
                     
-                    # Проверяем, есть ли квартира в этой же части
                     apartment_match = re.search(r'квартир[аы]?\s*(\d+)', part, re.IGNORECASE)
                     if apartment_match:
                         apartment = apartment_match.group(1)
                     
-                    # Если квартира в следующей части
                     if i + 1 < len(address_parts):
                         next_part = address_parts[i + 1]
                         apartment_match = re.search(r'квартир[аы]?\s*(\d+)', next_part, re.IGNORECASE)
                         if apartment_match:
                             apartment = apartment_match.group(1)
             
-            # Улица обычно перед "дом"
             for i, part in enumerate(address_parts):
                 if 'дом' in part.lower() or 'дом' in part:
                     if i > 0:
                         street = address_parts[i - 1]
                     break
             
-            # Город/населенный пункт обычно перед улицей
             if street:
                 street_index = address_parts.index(street) if street in address_parts else -1
                 if street_index > 0:
                     city = address_parts[street_index - 1]
             
-            # Если не нашли город, берем район
             if not city and district:
                 city = district
         
-        # Нормализуем номер телефона (удаляем пробелы, дефисы, плюсы)
         if phone:
             phone = re.sub(r'[\s\-\+]', '', phone)
         
-        # Если My ID не вернул номер, используем номер из запроса
         if not phone and phone_from_request:
             phone = re.sub(r'[\s\-\+]', '', phone_from_request)
         
@@ -807,15 +822,12 @@ class VerifyMyIDDataView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Ищем пользователя по номеру телефона
         try:
             user = CustomUser.objects.get(phone_number=phone)
         except CustomUser.DoesNotExist:
-            # Пробуем найти пользователя по PINFL, если номер телефона не найден
             if pinfl:
                 try:
                     user = CustomUser.objects.get(pnfl=pinfl)
-                    # Обновляем номер телефона, если он был пустым или отличается
                     if not user.phone_number or (phone and user.phone_number != phone):
                         user.phone_number = phone
                         user.save()
@@ -846,7 +858,6 @@ class VerifyMyIDDataView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
         
-        # Обновляем данные пользователя
         if first_name:
             user.first_name = first_name
         if last_name:
@@ -875,11 +886,9 @@ class VerifyMyIDDataView(APIView):
         if apartment:
             user.apartment = apartment
         
-        # Устанавливаем флаг верификации
         user.is_veriifed_my_id = True
         user.save()
         
-        # Отправляем данные в Grist
         phone_for_grist = phone if phone else phone_from_request
         try:
             grist_result = post_to_grist_counterparties(
@@ -889,7 +898,7 @@ class VerifyMyIDDataView(APIView):
                 pinfl=pinfl or "",
                 date_of_birth=birth_date_str or "",
                 address=address or "",
-                phone_number=phone_for_grist or "",  # phone_number request body dan
+                phone_number=phone_for_grist or "",
                 passport_series=pass_data or ""
             )
             if grist_result:
@@ -901,12 +910,20 @@ class VerifyMyIDDataView(APIView):
         
         user_data = UserSerializer(user).data
         
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+        
         return Response(
             {
                 "success": True,
                 "message": "Данные успешно обновлены",
                 "data": {
-                    "user": user_data
+                    "user": user_data,
+                    "tokens": {
+                        "access": access_token,
+                        "refresh": refresh_token
+                    }
                 }
             },
             status=status.HTTP_200_OK
@@ -953,14 +970,8 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
         "Accept": "application/json"
     }
     
-    # Формируем полное имя
     full_name = f"{first_name} {middle_name} {last_name}".strip() if middle_name else f"{first_name} {last_name}".strip()
     
-    # Формируем payload согласно структуре Grist таблицы Counterparties
-    # E'tibor: "phone" - это formula column (hisoblangan ustun), unga to'g'ridan-to'g'ri yozib bo'lmaydi
-    # Shuning uchun faqat "phone1" ustuniga yozamiz
-    # phone_number request body dan keladi va phone1 ga yuboriladi
-    # Ustunlar: full_name, pinfl, address, passport_series, date_of_birth, phone1
     payload = {
         "records": [
             {
@@ -970,17 +981,15 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
                     "address": address or "",
                     "passport_series": passport_series or "",
                     "date_of_birth": date_of_birth or None,
-                    "phone1": phone_number or ""  # phone_number request body dan, phone1 ga yuboriladi
+                    "phone1": phone_number or ""
                 }
             }
         ]
     }
     
-    # Удаляем пустые строки и None значения, чтобы избежать ошибок
-    # Grist может не принимать пустые строки для некоторых полей
     fields_to_send = {}
     for key, value in payload["records"][0]["fields"].items():
-        if value is not None and value != "":  # Только непустые значения
+        if value is not None and value != "":
             fields_to_send[key] = value
     
     payload["records"][0]["fields"] = fields_to_send
@@ -1006,4 +1015,165 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
     except Exception as e:
         logger.error(f"[post_to_grist_counterparties] Unexpected error: {str(e)}", exc_info=True)
         return None
+
+
+class UserDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        tags=['Пользователь'],
+        operation_summary="Получение данных пользователя",
+        operation_description="""
+        Получает данные текущего аутентифицированного пользователя.
+        
+        **Требуется авторизация:** Bearer Token в заголовке Authorization
+        """,
+        responses={
+            200: openapi.Response(
+                description="Данные пользователя",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "data": {
+                            "id": 1,
+                            "phone_number": "998901234567",
+                            "first_name": "Иван",
+                            "last_name": "Иванов",
+                            "email": "ivan@example.com"
+                        }
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Не авторизован",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Не авторизован"
+                    }
+                }
+            )
+        }
+    )
+    def get(self, request):
+        """Получить данные текущего пользователя"""
+        user = request.user
+        serializer = UserSerializer(user)
+        return Response(
+            {
+                "success": True,
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+    
+    @swagger_auto_schema(
+        tags=['Пользователь'],
+        operation_summary="Обновление данных пользователя",
+        operation_description="""
+        Обновляет данные текущего аутентифицированного пользователя.
+        
+        **Требуется авторизация:** Bearer Token в заголовке Authorization
+        
+        **Обновляемые поля:**
+        - first_name, last_name, email
+        - date_of_birth
+        - avatar (изображение)
+        - address, city, country, region, street, house, apartment, postal_index
+        """,
+        request_body=UserUpdateSerializer,
+        responses={
+            200: openapi.Response(
+                description="Данные успешно обновлены",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Данные успешно обновлены",
+                        "data": {
+                            "id": 1,
+                            "first_name": "Иван",
+                            "last_name": "Иванов"
+                        }
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Ошибка валидации",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Неверный формат данных",
+                        "errors": {}
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Не авторизован"
+            )
+        }
+    )
+    def put(self, request):
+        """Обновить данные текущего пользователя"""
+        user = request.user
+        serializer = UserUpdateSerializer(user, data=request.data, partial=True)
+        
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "success": False,
+                    "message": "Неверный формат данных",
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer.save()
+        
+        user_serializer = UserSerializer(user)
+        return Response(
+            {
+                "success": True,
+                "message": "Данные успешно обновлены",
+                "data": user_serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+    
+    @swagger_auto_schema(
+        tags=['Пользователь'],
+        operation_summary="Удаление аккаунта пользователя",
+        operation_description="""
+        Удаляет аккаунт текущего аутентифицированного пользователя.
+        
+        **Требуется авторизация:** Bearer Token в заголовке Authorization
+        
+        **Внимание:** Это действие необратимо!
+        """,
+        responses={
+            200: openapi.Response(
+                description="Аккаунт успешно удален",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Аккаунт успешно удален"
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Не авторизован"
+            )
+        }
+    )
+    def delete(self, request):
+        """Удалить аккаунт текущего пользователя"""
+        user = request.user
+        user.delete()
+        
+        return Response(
+            {
+                "success": True,
+                "message": "Аккаунт успешно удален"
+            },
+            status=status.HTTP_200_OK
+        )
     

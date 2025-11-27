@@ -5,6 +5,7 @@ from apps.v1.accounts.views import (
     ResendSMSCodeView,
     CreateMyIDSessionView,
     VerifyMyIDDataView,
+    UserDetailView,
 )
 
 urlpatterns = [
@@ -12,4 +13,5 @@ urlpatterns = [
     path('verify/', VerifySMSCodeView.as_view(), name='verify-sms-code'),
     path('resend/', ResendSMSCodeView.as_view(), name='resend-sms-code'),
     path('myid/verify/', VerifyMyIDDataView.as_view(), name='verify-myid-data'),
+    path('me/', UserDetailView.as_view(), name='user-detail'),
 ]

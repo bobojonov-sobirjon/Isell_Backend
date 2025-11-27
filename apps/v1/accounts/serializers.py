@@ -45,9 +45,19 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'phone_number', 'first_name', 'last_name', 
             'email', 'date_of_birth', 'avatar', 'address',
             'city', 'country', 'region', 'street', 'house', 'apartment', 'postal_index',
-            'pnfl', 'is_veriifed_my_id'
+            'pnfl', 'is_veriifed_my_id', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'phone_number', 'is_veriifed_my_id', 'created_at', 'updated_at']
+
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = [
+            'first_name', 'last_name', 'email', 'date_of_birth', 
+            'avatar', 'address', 'city', 'country', 'region', 
+            'street', 'house', 'apartment', 'postal_index'
+        ]
 
 
 class MyIDSessionSerializer(serializers.Serializer):
