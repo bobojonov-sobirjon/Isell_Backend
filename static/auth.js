@@ -532,12 +532,17 @@ async function initializeMYIDWebSDK() {
         // Get iframe element first (before using it)
         const myidIframe = elements.myidIframe;
         
+        // Check if iframe element exists
+        if (!myidIframe) {
+            throw new Error('MYID iframe element not found in DOM');
+        }
+        
         // Ensure iframe has proper permissions before loading
         // Don't set sandbox if we need camera access - sandbox blocks camera
         // Only set allow attribute for permissions
-        elements.myidIframe.setAttribute('allow', 'camera; microphone; fullscreen; autoplay');
+        myidIframe.setAttribute('allow', 'camera; microphone; fullscreen; autoplay');
         // Remove sandbox attribute as it blocks camera access
-        elements.myidIframe.removeAttribute('sandbox');
+        myidIframe.removeAttribute('sandbox');
         
         // Load iframe immediately - don't wait for camera check
         // MYID SDK will request camera permission itself
@@ -547,7 +552,7 @@ async function initializeMYIDWebSDK() {
         console.log('Iframe element:', myidIframe);
         console.log('Iframe current src:', myidIframe.src);
         
-        elements.myidIframe.src = myidUrl;
+        myidIframe.src = myidUrl;
         
         // Check iframe after setting src
         setTimeout(() => {
@@ -558,7 +563,7 @@ async function initializeMYIDWebSDK() {
         
         // According to documentation, we need to send screen info to iframe
         function screenChangeListener(e) {
-            if (myidIframe.contentWindow) {
+            if (myidIframe && myidIframe.contentWindow) {
                 try {
                     myidIframe.contentWindow.postMessage(
                         {
@@ -611,6 +616,10 @@ async function initializeMYIDWebSDK() {
         
         // Set timeout to show iframe even if load event doesn't fire
         let loadTimeout = setTimeout(() => {
+            if (!myidIframe) {
+                console.error('❌ myidIframe is null in timeout');
+                return;
+            }
             console.warn('⚠️ MYID iframe load timeout - showing iframe anyway');
             console.log('Iframe src:', myidIframe.src);
             console.log('Iframe contentWindow:', myidIframe.contentWindow);
@@ -620,6 +629,10 @@ async function initializeMYIDWebSDK() {
                 showStatus('Iframe yuklandi. Agar kamera ochilmasa, browser sozlamalarida ruxsat bering yoki sahifani yangilang.', 'info');
             }
         }, 3000); // 3 seconds timeout (increased)
+        
+        if (!myidIframe) {
+            throw new Error('MYID iframe element is null');
+        }
         
         myidIframe.addEventListener('load', () => {
             console.log('✅ MYID iframe loaded successfully');
@@ -655,15 +668,17 @@ async function initializeMYIDWebSDK() {
         });
         
         // Also listen for error events
-        myidIframe.addEventListener('error', (e) => {
-            console.error('❌ MYID iframe error:', e);
-            clearTimeout(loadTimeout);
-            showStatus('Iframe yuklashda xatolik yuz berdi', 'error');
-        });
+        if (myidIframe) {
+            myidIframe.addEventListener('error', (e) => {
+                console.error('❌ MYID iframe error:', e);
+                clearTimeout(loadTimeout);
+                showStatus('Iframe yuklashda xatolik yuz berdi', 'error');
+            });
+        }
         
         // Periodically check if iframe is loaded and send screen info
         let checkInterval = setInterval(() => {
-            if (myidIframe.contentWindow) {
+            if (myidIframe && myidIframe.contentWindow) {
                 console.log('Iframe contentWindow is available, sending screen info...');
                 screenChangeListener();
             }
