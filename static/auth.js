@@ -435,6 +435,14 @@ async function initializeMYIDWebSDK() {
         showStep('face');
         showStatus('MYID yuzni tanib olish jarayonini boshlayapti...', 'info');
         
+        // Ensure iframe element exists in DOM
+        if (!elements.myidIframe) {
+            elements.myidIframe = document.getElementById('myid-iframe');
+        }
+        if (!elements.myidIframe) {
+            throw new Error('MYID iframe element not found in DOM. Please ensure the page is fully loaded.');
+        }
+        
         const { pinfl, passData, birthDate, isResident } = authState.userData;
         
         if (!authState.sessionId) {
@@ -562,10 +570,12 @@ async function initializeMYIDWebSDK() {
         }, 100);
         
         // According to documentation, we need to send screen info to iframe
+        // Use elements.myidIframe instead of myidIframe to avoid closure issues
         function screenChangeListener(e) {
-            if (myidIframe && myidIframe.contentWindow) {
+            const iframe = elements.myidIframe;
+            if (iframe && iframe.contentWindow) {
                 try {
-                    myidIframe.contentWindow.postMessage(
+                    iframe.contentWindow.postMessage(
                         {
                             cmd: 'screen',
                             screen: {
@@ -616,13 +626,14 @@ async function initializeMYIDWebSDK() {
         
         // Set timeout to show iframe even if load event doesn't fire
         let loadTimeout = setTimeout(() => {
-            if (!myidIframe) {
+            const iframe = elements.myidIframe;
+            if (!iframe) {
                 console.error('❌ myidIframe is null in timeout');
                 return;
             }
             console.warn('⚠️ MYID iframe load timeout - showing iframe anyway');
-            console.log('Iframe src:', myidIframe.src);
-            console.log('Iframe contentWindow:', myidIframe.contentWindow);
+            console.log('Iframe src:', iframe.src);
+            console.log('Iframe contentWindow:', iframe.contentWindow);
             elements.faceLoading.style.display = 'none';
             elements.myidIframeContainer.style.display = 'block';
             if (!receivedSDKMessage) {
@@ -678,7 +689,8 @@ async function initializeMYIDWebSDK() {
         
         // Periodically check if iframe is loaded and send screen info
         let checkInterval = setInterval(() => {
-            if (myidIframe && myidIframe.contentWindow) {
+            const iframe = elements.myidIframe;
+            if (iframe && iframe.contentWindow) {
                 console.log('Iframe contentWindow is available, sending screen info...');
                 screenChangeListener();
             }
