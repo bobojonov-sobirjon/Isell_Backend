@@ -469,13 +469,19 @@ async function initializeMYIDWebSDK() {
             // Use current page URL as redirect_uri (remove query params and hash)
             // This is YOUR page where MYID will redirect after identification
             const currentUrl = window.location.origin + window.location.pathname;
-            // Remove trailing slash if it's not root, but keep it for production HTTPS
+            // Ensure trailing slash for Django URLs (Django requires trailing slash)
             let cleanUrl = currentUrl;
-            if (currentUrl.endsWith('/') && currentUrl !== window.location.origin + '/') {
-                cleanUrl = currentUrl.slice(0, -1);
+            // Always add trailing slash if pathname exists and doesn't end with '/'
+            // This is required for Django URL patterns
+            if (window.location.pathname && !window.location.pathname.endsWith('/')) {
+                cleanUrl = currentUrl + '/';
+            } else if (!window.location.pathname || window.location.pathname === '/') {
+                // If root path, keep as is
+                cleanUrl = window.location.origin + '/';
             }
             redirectUri = encodeURIComponent(cleanUrl);
             console.log('Auto-detected redirect URI:', cleanUrl);
+            console.log('Original pathname:', window.location.pathname);
         }
         
         console.log('Redirect URI (where MYID will redirect after identification):', decodeURIComponent(redirectUri));
