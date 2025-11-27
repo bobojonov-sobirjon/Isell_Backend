@@ -169,21 +169,40 @@ class ProductListSerializer(serializers.Serializer):
         return first_detail.id if first_detail else obj.id
     
     def get_used(self, obj):
+        # Tekshiramiz product name da B/U bor yoki yo'qligini (faqat lotin harflar)
+        product_name = (obj.name or "").upper()
+        if 'B/U' in product_name or 'B-U' in product_name or 'USED' in product_name:
+            return 1
+        
+        # Tekshiramiz variation_name da B/U bor yoki yo'qligini (faqat lotin harflar)
         product_id = ProductIDs.objects.filter(product=obj).first()
         if product_id and product_id.variation_name:
-            variation_lower = product_id.variation_name.lower()
-            if 'B/U' in variation_lower or 'B/U' in variation_lower or 'used' in variation_lower:
+            variation_upper = (product_id.variation_name or "").upper()
+            if 'B/U' in variation_upper or 'B-U' in variation_upper or 'USED' in variation_upper:
                 return 1
+        
         return 2
     
     def get_display_name(self, obj):
         product_name = obj.name or ""
         product_id = ProductIDs.objects.filter(product=obj).first()
+        is_used = self.get_used(obj) == 1
         
-        used_text = "Б/У" if self.get_used(obj) == 1 else "Новый"
-        display = f"{product_name} {used_text}"
+        # Product name dan "B/U", "B-U", "USED", "NEW" va shunga o'xshash so'zlarni olib tashlaymiz (faqat lotin)
+        import re
+        # Barcha variantlarni olib tashlaymiz (faqat lotin harflar)
+        cleaned_name = re.sub(r'\s*(B/U|B-U|USED|NEW)\s*', '', product_name, flags=re.IGNORECASE).strip()
         
-        if product_id and product_id.variation_name and self.get_used(obj) == 1:
+        # Agar tozalangan name bo'sh bo'lsa, original name ni ishlatamiz
+        if not cleaned_name:
+            cleaned_name = product_name
+        
+        # Used text qo'shamiz
+        used_text = "Б/У" if is_used else "Новый"
+        display = f"{cleaned_name} {used_text}"
+        
+        # Agar B/U tovar bo'lsa va variation_name bo'lsa, uni qo'shamiz
+        if product_id and product_id.variation_name and is_used:
             display += f", {product_id.variation_name}"
         
         return display
