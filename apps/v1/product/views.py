@@ -1075,6 +1075,11 @@ class CalculatePaymentScheduleView(APIView):
             minimum_contribution = 0
             application_status = None
             counterparty_id_for_response = None
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            logger.info(f"[CalculatePaymentScheduleView Mode 1] User: {user}, User ID: {user.id if user else None}")
+            
             if user:
                 try:
                     # Use ThreadPoolExecutor for concurrent API calls
@@ -1088,9 +1093,13 @@ class CalculatePaymentScheduleView(APIView):
                     applications = application_data.get('records', [])
                     grist_products = grist_products_data.get('records', [])
                     
+                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Applications count: {len(applications)}, Grist products count: {len(grist_products)}")
+                    
                     # Get counterparty_id
                     counterparty_id = get_user_counterparty_id(user)
                     counterparty_id_for_response = counterparty_id
+                    
+                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Counterparty ID: {counterparty_id}")
                     
                     if counterparty_id:
                         # Build grist_product_map
@@ -1104,10 +1113,14 @@ class CalculatePaymentScheduleView(APIView):
                         # First check for today's application
                         today_app = get_today_application_by_counterparty(applications, counterparty_id)
                         
+                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Today app found: {today_app is not None}")
+                        
                         if today_app:
                             # Use today's application
                             today_stage = today_app.get('fields', {}).get('stage', '')
                             application_status = today_stage
+                            
+                            logger.info(f"[CalculatePaymentScheduleView Mode 1] Today app stage: {today_stage}")
                             
                             # Calculate minimum_contribution based on status
                             if today_stage in ['Accepted', 'Denied']:
@@ -1151,20 +1164,28 @@ class CalculatePaymentScheduleView(APIView):
                             # Создавать новую заявку только если статус сегодняшней заявки "Accepted" или "Success"
                             # И все сегодняшние заявки имеют статус "Accepted" или "Success"
                             # Если статус "New" или "Assessment", не создавать новую
-                            if today_stage in ['Accepted', 'Success'] and are_all_today_applications_accepted(applications, counterparty_id):
+                            are_all_accepted = are_all_today_applications_accepted(applications, counterparty_id)
+                            logger.info(f"[CalculatePaymentScheduleView Mode 1] Today stage: {today_stage}, Are all accepted: {are_all_accepted}")
+                            
+                            if today_stage in ['Accepted', 'Success'] and are_all_accepted:
                                 # Get grist_product_ids from request
                                 grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Grist product IDs: {grist_product_ids}")
                                 
                                 # Convert grist_product_ids to product_ids from Price table
                                 from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
                                 product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Product IDs for application: {product_ids_for_application}")
                                 
                                 # Get risk_category_id from today's app
                                 risk_category_id = today_app.get('fields', {}).get('risk_category_id')
+                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Risk category ID: {risk_category_id}")
                                 
                                 # Create application in grist
                                 try:
                                     current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                    
+                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Creating application in Grist: counterparty_id={counterparty_id}, date={current_date_str}, stage=New, risk_category_id={risk_category_id}, issue_limit={total_down_payment}, products={product_ids_for_application}")
                                     
                                     result = post_to_grist_application(
                                         counterparty_id=counterparty_id,
@@ -1175,20 +1196,27 @@ class CalculatePaymentScheduleView(APIView):
                                         products=product_ids_for_application
                                     )
                                     
+                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Grist application result: {result}")
+                                    
                                     if result:
                                         # IMPORTANT: After creating new application, return "New" status
                                         application_status = 'New'
+                                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Application created successfully, status set to: {application_status}")
+                                    else:
+                                        logger.warning(f"[CalculatePaymentScheduleView Mode 1] Application creation returned False/None")
                                 except Exception as e:
-                                    import logging
-                                    logger = logging.getLogger(__name__)
-                                    logger.error(f"Error creating application (mode 1): {str(e)}")
+                                    logger.error(f"[CalculatePaymentScheduleView Mode 1] Error creating application: {str(e)}, Type: {type(e).__name__}", exc_info=True)
                         else:
                             # No application for today, check latest application to get risk_category_id
                             latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
                             
+                            logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app found: {latest_app is not None}")
+                            
                             if latest_app:
                                 latest_stage = latest_app.get('fields', {}).get('stage', '')
                                 application_status = latest_stage
+                                
+                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app stage: {latest_stage}")
                                 
                                 # Calculate minimum_contribution based on status
                                 if latest_stage in ['Accepted', 'Denied']:
@@ -1230,17 +1258,22 @@ class CalculatePaymentScheduleView(APIView):
                                 if latest_stage in ['Accepted', 'Success']:
                                     # Get grist_product_ids from request (these are Price table record ids)
                                     grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Grist product IDs: {grist_product_ids}")
                                     
                                     # Convert grist_product_ids to product_ids from Price table
                                     from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
                                     product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Product IDs for application: {product_ids_for_application}")
                                     
                                     # Get risk_category_id from latest app
                                     risk_category_id = latest_app.get('fields', {}).get('risk_category_id')
+                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Risk category ID: {risk_category_id}")
                                     
                                     # Create application in grist
                                     try:
                                         current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                        
+                                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Creating application in Grist: counterparty_id={counterparty_id}, date={current_date_str}, stage=New, risk_category_id={risk_category_id}, issue_limit={total_down_payment}, products={product_ids_for_application}")
                                         
                                         result = post_to_grist_application(
                                             counterparty_id=counterparty_id,
@@ -1251,25 +1284,28 @@ class CalculatePaymentScheduleView(APIView):
                                             products=product_ids_for_application
                                         )
                                         
+                                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Grist application result: {result}")
+                                        
                                         if result:
                                             # IMPORTANT: After creating new application, return "New" status
                                             application_status = 'New'
+                                            logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Application created successfully, status set to: {application_status}")
+                                        else:
+                                            logger.warning(f"[CalculatePaymentScheduleView Mode 1] Latest app - Application creation returned False/None")
                                     except Exception as e:
-                                        import logging
-                                        logger = logging.getLogger(__name__)
-                                        logger.error(f"Error creating application (mode 1): {str(e)}")
+                                        logger.error(f"[CalculatePaymentScheduleView Mode 1] Latest app - Error creating application: {str(e)}, Type: {type(e).__name__}", exc_info=True)
                             else:
                                 # No application found at all
                                 application_status = None
                                 minimum_contribution = 0
+                                logger.info(f"[CalculatePaymentScheduleView Mode 1] No application found at all")
                     else:
                         # No counterparty_id, can't create application
                         application_status = None
                         minimum_contribution = 0
+                        logger.warning(f"[CalculatePaymentScheduleView Mode 1] No counterparty_id found for user")
                 except Exception as e:
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Error in CalculatePaymentScheduleView (mode 1): {str(e)}, Type: {type(e).__name__}")
+                    logger.error(f"[CalculatePaymentScheduleView Mode 1] Exception: {str(e)}, Type: {type(e).__name__}", exc_info=True)
                     minimum_contribution = 0
                     application_status = None
             
@@ -1806,5 +1842,9 @@ class CalculatePaymentScheduleView(APIView):
             "monthly_payments": monthly_payments,
             "product_list": response_product_list
         }
+        
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[CalculatePaymentScheduleView] Final response - status: {application_status}, counterparty_id: {counterparty_id_for_response}, ability_to_order: {ability_to_order}, calculation_mode: {calculation_mode}")
         
         return Response(response_data, status=status.HTTP_200_OK)
