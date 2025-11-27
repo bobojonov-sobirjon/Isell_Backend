@@ -172,7 +172,7 @@ class ProductListSerializer(serializers.Serializer):
         product_id = ProductIDs.objects.filter(product=obj).first()
         if product_id and product_id.variation_name:
             variation_lower = product_id.variation_name.lower()
-            if 'б/у' in variation_lower or 'бу' in variation_lower or 'used' in variation_lower:
+            if 'B/U' in variation_lower or 'B/U' in variation_lower or 'used' in variation_lower:
                 return 1
         return 2
     
