@@ -133,7 +133,7 @@ def get_user_data(access_token, code):
     Returns:
         dict: Ответ от API с данными пользователя или ошибка
     """
-    url = f"{settings.MYID_HOST}/api/v1/sdk/data"
+    url = f"https://api.devmyid.uz/api/v1/sdk/data"
     
     headers = {
         "Content-Type": "application/json",

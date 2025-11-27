@@ -7,6 +7,7 @@ from django.utils import timezone
 from datetime import timedelta
 import random
 import re
+from django.shortcuts import render
 
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -951,3 +952,7 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
         return response.json()
     except Exception as e:
         return None
+    
+
+def home(request):
+    return render(request, 'index.html')
