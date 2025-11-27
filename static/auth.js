@@ -537,45 +537,44 @@ async function initializeMYIDWebSDK() {
         elements.faceLoading.style.display = 'block';
         elements.myidIframeContainer.style.display = 'none';
         
-        // Get iframe element first (before using it)
-        const myidIframe = elements.myidIframe;
-        
+        // Use elements.myidIframe directly - don't create local variable to avoid TDZ issues
         // Check if iframe element exists
-        if (!myidIframe) {
+        if (!elements.myidIframe) {
             throw new Error('MYID iframe element not found in DOM');
         }
         
         // Ensure iframe has proper permissions before loading
         // Don't set sandbox if we need camera access - sandbox blocks camera
         // Only set allow attribute for permissions
-        myidIframe.setAttribute('allow', 'camera; microphone; fullscreen; autoplay');
+        elements.myidIframe.setAttribute('allow', 'camera; microphone; fullscreen; autoplay');
         // Remove sandbox attribute as it blocks camera access
-        myidIframe.removeAttribute('sandbox');
+        elements.myidIframe.removeAttribute('sandbox');
         
         // Load iframe immediately - don't wait for camera check
         // MYID SDK will request camera permission itself
         console.log('Setting iframe src to:', myidUrl);
         
         // Check iframe before loading
-        console.log('Iframe element:', myidIframe);
-        console.log('Iframe current src:', myidIframe.src);
+        console.log('Iframe element:', elements.myidIframe);
+        console.log('Iframe current src:', elements.myidIframe ? elements.myidIframe.src : 'null');
         
-        myidIframe.src = myidUrl;
+        elements.myidIframe.src = myidUrl;
         
         // Check iframe after setting src
         setTimeout(() => {
-            console.log('Iframe src after setting:', myidIframe.src);
-            console.log('Iframe contentWindow:', myidIframe.contentWindow);
-            console.log('Iframe contentDocument:', myidIframe.contentDocument);
+            if (elements.myidIframe) {
+                console.log('Iframe src after setting:', elements.myidIframe.src);
+                console.log('Iframe contentWindow:', elements.myidIframe.contentWindow);
+                console.log('Iframe contentDocument:', elements.myidIframe.contentDocument);
+            }
         }, 100);
         
         // According to documentation, we need to send screen info to iframe
-        // Use elements.myidIframe instead of myidIframe to avoid closure issues
+        // Use elements.myidIframe directly to avoid closure and TDZ issues
         function screenChangeListener(e) {
-            const iframe = elements.myidIframe;
-            if (iframe && iframe.contentWindow) {
+            if (elements.myidIframe && elements.myidIframe.contentWindow) {
                 try {
-                    iframe.contentWindow.postMessage(
+                    elements.myidIframe.contentWindow.postMessage(
                         {
                             cmd: 'screen',
                             screen: {
@@ -641,11 +640,12 @@ async function initializeMYIDWebSDK() {
             }
         }, 3000); // 3 seconds timeout (increased)
         
-        if (!myidIframe) {
+        // Use elements.myidIframe directly
+        if (!elements.myidIframe) {
             throw new Error('MYID iframe element is null');
         }
         
-        myidIframe.addEventListener('load', () => {
+        elements.myidIframe.addEventListener('load', () => {
             console.log('✅ MYID iframe loaded successfully');
             clearTimeout(loadTimeout);
             
@@ -679,8 +679,8 @@ async function initializeMYIDWebSDK() {
         });
         
         // Also listen for error events
-        if (myidIframe) {
-            myidIframe.addEventListener('error', (e) => {
+        if (elements.myidIframe) {
+            elements.myidIframe.addEventListener('error', (e) => {
                 console.error('❌ MYID iframe error:', e);
                 clearTimeout(loadTimeout);
                 showStatus('Iframe yuklashda xatolik yuz berdi', 'error');
@@ -821,10 +821,9 @@ function handleMYIDMessage(event) {
             elements.faceLoading.style.display = 'none';
             elements.myidIframeContainer.style.display = 'block';
             // Send screen info again when SDK is loaded
-            const myidIframe = elements.myidIframe;
-            if (myidIframe && myidIframe.contentWindow) {
+            if (elements.myidIframe && elements.myidIframe.contentWindow) {
                 try {
-                    myidIframe.contentWindow.postMessage(
+                    elements.myidIframe.contentWindow.postMessage(
                         {
                             cmd: 'screen',
                             screen: {
