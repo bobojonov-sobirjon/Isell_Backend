@@ -596,6 +596,7 @@ class VerifyMyIDDataView(APIView):
         **Параметры запроса:**
         - code: Код полученный от SDK после идентификации (query parameter)
         - token: Access token полученный при создании сессии (query parameter)
+        - phone_number: Номер телефона пользователя (query parameter, опционально) - используется если My ID не вернул номер
         
         **Процесс:**
         1. Получает данные пользователя из MyID API
@@ -617,6 +618,13 @@ class VerifyMyIDDataView(APIView):
                 description="Access token из сессии",
                 type=openapi.TYPE_STRING,
                 required=True
+            ),
+            openapi.Parameter(
+                'phone_number',
+                openapi.IN_QUERY,
+                description="Номер телефона пользователя (используется если My ID не вернул номер)",
+                type=openapi.TYPE_STRING,
+                required=False
             )
         ],
         responses={
@@ -670,19 +678,11 @@ class VerifyMyIDDataView(APIView):
         import logging
         logger = logging.getLogger(__name__)
         
-        logger.debug(f"[VerifyMyIDDataView] ========================================")
-        logger.debug(f"[VerifyMyIDDataView] ===== REQUEST START =====")
-        logger.debug(f"[VerifyMyIDDataView] ========================================")
-        
         code = request.query_params.get('code')
         access_token = request.query_params.get('token')
-        
-        logger.debug(f"[VerifyMyIDDataView] Received parameters:")
-        logger.debug(f"[VerifyMyIDDataView] - code: {code}")
-        logger.debug(f"[VerifyMyIDDataView] - token: {access_token[:50] if access_token else None}...")
+        phone_from_request = request.query_params.get('phone_number')
         
         if not code or not access_token:
-            logger.warning(f"[VerifyMyIDDataView] Missing parameters: code={code}, token={'present' if access_token else 'missing'}")
             return Response(
                 {
                     "success": False,
@@ -692,13 +692,7 @@ class VerifyMyIDDataView(APIView):
             )
         
         # Получаем данные пользователя из MyID
-        logger.debug(f"[VerifyMyIDDataView] Calling get_user_data with code={code}")
         user_data_result = get_user_data(access_token, code)
-        
-        logger.debug(f"[VerifyMyIDDataView] get_user_data result:")
-        logger.debug(f"[VerifyMyIDDataView] - success: {user_data_result.get('success')}")
-        logger.debug(f"[VerifyMyIDDataView] - status_code: {user_data_result.get('status_code')}")
-        logger.debug(f"[VerifyMyIDDataView] - error: {user_data_result.get('error')}")
         
         if not user_data_result.get("success"):
             error = user_data_result.get("error")
@@ -727,21 +721,12 @@ class VerifyMyIDDataView(APIView):
             )
         
         myid_data = user_data_result.get("data", {})
-        logger.debug(f"[VerifyMyIDDataView] MyID data keys: {list(myid_data.keys())}")
-        
         profile = myid_data.get("data", {}).get("profile", {})
-        logger.debug(f"[VerifyMyIDDataView] Profile keys: {list(profile.keys())}")
-        
         common_data = profile.get("common_data", {})
         doc_data = profile.get("doc_data", {})
         contacts = profile.get("contacts", {})
         address_data = profile.get("address", {})
         permanent_registration = address_data.get("permanent_registration", {})
-        
-        logger.debug(f"[VerifyMyIDDataView] Extracted data:")
-        logger.debug(f"[VerifyMyIDDataView] - contacts: {contacts}")
-        logger.debug(f"[VerifyMyIDDataView] - common_data: {common_data}")
-        logger.debug(f"[VerifyMyIDDataView] - doc_data: {doc_data}")
         
         # Извлекаем данные
         phone = contacts.get("phone", "")
@@ -752,55 +737,89 @@ class VerifyMyIDDataView(APIView):
         birth_date_str = common_data.get("birth_date", "")
         pass_data = doc_data.get("pass_data", "")
         
-        logger.debug(f"[VerifyMyIDDataView] Extracted values:")
-        logger.debug(f"[VerifyMyIDDataView] - phone (raw): {phone}")
-        logger.debug(f"[VerifyMyIDDataView] - first_name: {first_name}")
-        logger.debug(f"[VerifyMyIDDataView] - last_name: {last_name}")
-        logger.debug(f"[VerifyMyIDDataView] - pinfl: {pinfl}")
-        logger.debug(f"[VerifyMyIDDataView] - birth_date: {birth_date_str}")
-        logger.debug(f"[VerifyMyIDDataView] - pass_data: {pass_data}")
-        
         # Адрес
         address = permanent_registration.get("address", "")
         region = permanent_registration.get("region", "")
         country = permanent_registration.get("country", "")
+        district = permanent_registration.get("district", "")
+        
+        # Парсим адрес для извлечения city, street, house, apartment
+        city = None
+        street = None
+        house = None
+        apartment = None
+        
+        if address:
+            # Пример: "Бухарская область, Шафирканский район, Навбахор МСГ, Катта махалла, дом 65"
+            address_parts = [part.strip() for part in address.split(',')]
+            
+            # Ищем дом (обычно "дом XX" или "дом XX, квартира YY")
+            for i, part in enumerate(address_parts):
+                if 'дом' in part.lower() or 'дом' in part:
+                    # Извлекаем номер дома
+                    house_match = re.search(r'дом\s*(\d+)', part, re.IGNORECASE)
+                    if house_match:
+                        house = house_match.group(1)
+                    
+                    # Проверяем, есть ли квартира в этой же части
+                    apartment_match = re.search(r'квартир[аы]?\s*(\d+)', part, re.IGNORECASE)
+                    if apartment_match:
+                        apartment = apartment_match.group(1)
+                    
+                    # Если квартира в следующей части
+                    if i + 1 < len(address_parts):
+                        next_part = address_parts[i + 1]
+                        apartment_match = re.search(r'квартир[аы]?\s*(\d+)', next_part, re.IGNORECASE)
+                        if apartment_match:
+                            apartment = apartment_match.group(1)
+            
+            # Улица обычно перед "дом"
+            for i, part in enumerate(address_parts):
+                if 'дом' in part.lower() or 'дом' in part:
+                    if i > 0:
+                        street = address_parts[i - 1]
+                    break
+            
+            # Город/населенный пункт обычно перед улицей
+            if street:
+                street_index = address_parts.index(street) if street in address_parts else -1
+                if street_index > 0:
+                    city = address_parts[street_index - 1]
+            
+            # Если не нашли город, берем район
+            if not city and district:
+                city = district
         
         # Нормализуем номер телефона (удаляем пробелы, дефисы, плюсы)
-        phone_original = phone
         if phone:
             phone = re.sub(r'[\s\-\+]', '', phone)
-            logger.debug(f"[VerifyMyIDDataView] Phone normalized: '{phone_original}' -> '{phone}'")
+        
+        # Если My ID не вернул номер, используем номер из запроса
+        if not phone and phone_from_request:
+            phone = re.sub(r'[\s\-\+]', '', phone_from_request)
         
         if not phone:
-            logger.warning(f"[VerifyMyIDDataView] Phone number is empty after extraction")
             return Response(
                 {
                     "success": False,
-                    "message": "Номер телефона не найден в данных MyID"
+                    "message": "Номер телефона не найден в данных MyID и не передан в запросе"
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         # Ищем пользователя по номеру телефона
-        logger.debug(f"[VerifyMyIDDataView] Searching for user with phone_number='{phone}'")
         try:
             user = CustomUser.objects.get(phone_number=phone)
-            logger.debug(f"[VerifyMyIDDataView] User found by phone_number: user_id={user.id}, username={user.username}")
         except CustomUser.DoesNotExist:
-            logger.warning(f"[VerifyMyIDDataView] User not found by phone_number='{phone}'")
             # Пробуем найти пользователя по PINFL, если номер телефона не найден
             if pinfl:
-                logger.debug(f"[VerifyMyIDDataView] Trying to find user by PINFL='{pinfl}'")
                 try:
                     user = CustomUser.objects.get(pnfl=pinfl)
-                    logger.debug(f"[VerifyMyIDDataView] User found by PINFL: user_id={user.id}, username={user.username}, phone_number={user.phone_number}")
-                    # Обновляем номер телефона, если он был пустым
-                    if not user.phone_number:
-                        logger.debug(f"[VerifyMyIDDataView] Updating user phone_number from None to '{phone}'")
+                    # Обновляем номер телефона, если он был пустым или отличается
+                    if not user.phone_number or (phone and user.phone_number != phone):
                         user.phone_number = phone
                         user.save()
                 except CustomUser.DoesNotExist:
-                    logger.error(f"[VerifyMyIDDataView] User not found by PINFL='{pinfl}' either")
                     return Response(
                         {
                             "success": False,
@@ -813,75 +832,74 @@ class VerifyMyIDDataView(APIView):
                         status=status.HTTP_404_NOT_FOUND
                     )
             else:
-                logger.error(f"[VerifyMyIDDataView] PINFL not available, cannot search by PINFL")
                 return Response(
                     {
                         "success": False,
-                        "message": "Пользователь не найден",
+                        "message": "Пользователь не найден. Убедитесь, что вы передали phone_number в запросе или что My ID вернул корректные данные.",
                         "debug": {
-                            "phone_searched": phone
+                            "phone_searched": phone,
+                            "phone_from_request": phone_from_request,
+                            "pinfl_available": bool(pinfl),
+                            "pass_data_available": bool(pass_data)
                         }
                     },
                     status=status.HTTP_404_NOT_FOUND
                 )
         
         # Обновляем данные пользователя
-        logger.debug(f"[VerifyMyIDDataView] Updating user data...")
         if first_name:
             user.first_name = first_name
-            logger.debug(f"[VerifyMyIDDataView] - Updated first_name: {first_name}")
         if last_name:
             user.last_name = last_name
-            logger.debug(f"[VerifyMyIDDataView] - Updated last_name: {last_name}")
         if pinfl:
             user.pnfl = pinfl
-            logger.debug(f"[VerifyMyIDDataView] - Updated pnfl: {pinfl}")
         if birth_date_str:
             try:
                 from datetime import datetime
                 birth_date = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
                 user.date_of_birth = birth_date
-                logger.debug(f"[VerifyMyIDDataView] - Updated date_of_birth: {birth_date}")
             except Exception as e:
                 logger.warning(f"[VerifyMyIDDataView] - Failed to parse birth_date '{birth_date_str}': {str(e)}")
         if address:
             user.address = address
-            logger.debug(f"[VerifyMyIDDataView] - Updated address: {address}")
         if country:
             user.country = country
-            logger.debug(f"[VerifyMyIDDataView] - Updated country: {country}")
         if region:
             user.region = region
-            logger.debug(f"[VerifyMyIDDataView] - Updated region: {region}")
+        if city:
+            user.city = city
+        if street:
+            user.street = street
+        if house:
+            user.house = house
+        if apartment:
+            user.apartment = apartment
         
         # Устанавливаем флаг верификации
         user.is_veriifed_my_id = True
-        logger.debug(f"[VerifyMyIDDataView] - Setting is_veriifed_my_id = True")
         user.save()
-        logger.debug(f"[VerifyMyIDDataView] User saved successfully")
         
         # Отправляем данные в Grist
-        logger.debug(f"[VerifyMyIDDataView] Posting data to Grist...")
+        phone_for_grist = phone if phone else phone_from_request
         try:
-            post_to_grist_counterparties(
+            grist_result = post_to_grist_counterparties(
                 first_name=first_name or "",
                 last_name=last_name or "",
                 middle_name=middle_name or "",
                 pinfl=pinfl or "",
                 date_of_birth=birth_date_str or "",
                 address=address or "",
-                phone=phone or "",
+                phone_number=phone_for_grist or "",  # phone_number request body dan
                 passport_series=pass_data or ""
             )
-            logger.debug(f"[VerifyMyIDDataView] Data posted to Grist successfully")
+            if grist_result:
+                logger.info(f"[VerifyMyIDDataView] Data posted to Grist successfully: {grist_result}")
+            else:
+                logger.warning(f"[VerifyMyIDDataView] Grist post returned None - check API_KEY, DOC_ID, or network")
         except Exception as e:
-            logger.error(f"[VerifyMyIDDataView] Error posting to Grist: {str(e)}")
+            logger.error(f"[VerifyMyIDDataView] Error posting to Grist: {str(e)}", exc_info=True)
         
         user_data = UserSerializer(user).data
-        
-        logger.debug(f"[VerifyMyIDDataView] ===== REQUEST SUCCESS =====")
-        logger.debug(f"[VerifyMyIDDataView] Returning user data for user_id={user.id}")
-        logger.debug(f"[VerifyMyIDDataView] ========================================")
         
         return Response(
             {
@@ -896,7 +914,7 @@ class VerifyMyIDDataView(APIView):
 
 
 def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl, 
-                                  date_of_birth, address, phone, passport_series):
+                                  date_of_birth, address, phone_number, passport_series):
     """
     Отправка данных в Grist таблицу Counterparties
     
@@ -907,17 +925,24 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
         pinfl: PINFL
         date_of_birth: Дата рождения
         address: Адрес
-        phone: Телефон
+        phone_number: Телефон (request body dan keladi)
         passport_series: Серия паспорта
+    
+    Returns:
+        dict: Ответ от Grist API или None при ошибке
     """
     import os
     import requests
+    import logging
+    
+    logger = logging.getLogger(__name__)
     
     API_KEY = os.getenv('ISell_API_KEY')
     DOC_ID = os.getenv('ISell_DOC_ID')
     COUNTERPARTIES_TABLE = os.getenv('ISell_CONTERPARTIES', 'Counterparties')
     
     if not API_KEY or not DOC_ID:
+        logger.warning(f"[post_to_grist_counterparties] Missing API_KEY or DOC_ID. API_KEY={bool(API_KEY)}, DOC_ID={bool(DOC_ID)}")
         return None
     
     url = f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{COUNTERPARTIES_TABLE}/records"
@@ -931,25 +956,54 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
     # Формируем полное имя
     full_name = f"{first_name} {middle_name} {last_name}".strip() if middle_name else f"{first_name} {last_name}".strip()
     
+    # Формируем payload согласно структуре Grist таблицы Counterparties
+    # E'tibor: "phone" - это formula column (hisoblangan ustun), unga to'g'ridan-to'g'ri yozib bo'lmaydi
+    # Shuning uchun faqat "phone1" ustuniga yozamiz
+    # phone_number request body dan keladi va phone1 ga yuboriladi
+    # Ustunlar: full_name, pinfl, address, passport_series, date_of_birth, phone1
     payload = {
         "records": [
             {
                 "fields": {
-                    "name": full_name,
-                    "pinfl": pinfl,
-                    "address": address,
-                    "passport_series": passport_series,
-                    "date_of_birth": date_of_birth,
-                    "phone": phone
+                    "full_name": full_name,
+                    "pinfl": pinfl or "",
+                    "address": address or "",
+                    "passport_series": passport_series or "",
+                    "date_of_birth": date_of_birth or None,
+                    "phone1": phone_number or ""  # phone_number request body dan, phone1 ga yuboriladi
                 }
             }
         ]
     }
     
+    # Удаляем пустые строки и None значения, чтобы избежать ошибок
+    # Grist может не принимать пустые строки для некоторых полей
+    fields_to_send = {}
+    for key, value in payload["records"][0]["fields"].items():
+        if value is not None and value != "":  # Только непустые значения
+            fields_to_send[key] = value
+    
+    payload["records"][0]["fields"] = fields_to_send
+    
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
-        return response.json()
+        
+        result = response.json()
+        logger.info(f"[post_to_grist_counterparties] Successfully posted to Grist: {result}")
+        return result
+    except requests.exceptions.HTTPError as e:
+        error_detail = None
+        try:
+            error_detail = response.json()
+        except:
+            error_detail = response.text
+        logger.error(f"[post_to_grist_counterparties] HTTP Error: {e}, Status: {response.status_code}, Detail: {error_detail}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[post_to_grist_counterparties] Request Exception: {str(e)}")
+        return None
     except Exception as e:
+        logger.error(f"[post_to_grist_counterparties] Unexpected error: {str(e)}", exc_info=True)
         return None
     
