@@ -953,6 +953,3 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
     except Exception as e:
         return None
     
-
-def home(request):
-    return render(request, 'index.html')
