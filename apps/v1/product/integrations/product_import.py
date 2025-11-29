@@ -2,12 +2,28 @@ import requests
 import os
 import asyncio
 import aiohttp
+import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from django.core.files.base import ContentFile
 from django.db import transaction
 
 from apps.v1.product.models import Categories, Products, ProductIDs, ProductDetails, ProductProperties, ProductCharacteristics, ProductImages
+
+# Debug logger qo'shamiz
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console'ga chiqaradi
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Print ham qo'shamiz, chunki u har doim ishlaydi
+def debug_print(*args, **kwargs):
+    """Debug uchun print funksiyasi"""
+    print(*args, **kwargs)
 
 try:
     from django.conf import settings
@@ -895,13 +911,22 @@ def cleanup_removed_characteristics():
 
 @transaction.atomic
 def import_product_price_categories():
+    """
+    Price category ma'lumotlarini import qiladi.
+    Ma'lumotlar 3 ta API'dan olinadi:
+    1. ISell_PRODUCTS - productlar ro'yxati (price_category_id bilan)
+    2. ISell_PRICE_CATEGORY - price category nomlari
+    3. Isell_PRODUCT_PRICE - product_id va grist_id mapping
+    """
     try:
+        # 1. Environment variables tekshirish
         if not ISell_PRODUCTS or not ISell_PRICE_CATEGORY or not Isell_PRODUCT_PRICE:
             return {
                 "success": False,
                 "message": "Environment variables not set"
             }
         
+        # 2. API'dan ma'lumotlarni olish
         async def fetch_all():
             async with aiohttp.ClientSession() as session:
                 url1 = get_url(ISell_PRODUCTS)
@@ -918,6 +943,7 @@ def import_product_price_categories():
         
         products_data, price_categories_data, price_data = asyncio.run(fetch_all())
         
+        # 3. Ma'lumotlar mavjudligini tekshirish
         if not products_data or not price_categories_data or not price_data:
             return {
                 "success": False,
@@ -934,6 +960,7 @@ def import_product_price_categories():
                 "message": "Ma'lumotlar topilmadi"
             }
         
+        # 4. Price categories dictionary yaratish
         price_categories_dict = {}
         for record in price_categories_records:
             record_id = record.get("id")
@@ -942,68 +969,86 @@ def import_product_price_categories():
             if record_id and category_value:
                 price_categories_dict[str(record_id)] = category_value
         
-        product_id_to_grist_id_map = {}
-        for record in price_records:
-            fields = record.get("fields", {})
-            product_id = fields.get("product_id")
-            actual = fields.get("actual", False)
-            if actual and product_id:
-                record_id = record.get("id")
-                if record_id:
-                    product_id_to_grist_id_map[product_id] = str(record_id)
-        
+        # 5. Productlarni yangilash
         updated_count = 0
         skipped_count = 0
+        skipped_reasons = {
+            "no_product_id": 0,
+            "no_price_category_id": 0,
+            "no_price_category_value": 0,
+            "no_product_id_obj": 0,
+            "no_product": 0,
+            "exception": 0
+        }
         
-        for record in products_records:
+        for idx, record in enumerate(products_records, 1):
             fields = record.get("fields", {})
             product_id_from_products = record.get("id")
             price_category_id = fields.get("price_category_id")
             
             if not product_id_from_products:
                 skipped_count += 1
+                skipped_reasons["no_product_id"] += 1
                 continue
             
             if not price_category_id:
                 skipped_count += 1
+                skipped_reasons["no_price_category_id"] += 1
                 continue
             
             price_category_value = price_categories_dict.get(str(price_category_id))
             
             if not price_category_value:
                 skipped_count += 1
+                skipped_reasons["no_price_category_value"] += 1
                 continue
             
             try:
-                grist_product_id = product_id_to_grist_id_map.get(product_id_from_products)
+                # 1. Products jadvalidan to'g'ridan-to'g'ri id (grist_product_id) olinadi
+                # 2. ProductIDs jadvalidan shu grist_product_id orqali product topiladi
+                # 3. ProductIDs modelidagi product field orqali Product modelidan product olinadi
                 
-                if not grist_product_id:
+                grist_product_id = product_id_from_products
+                product_id_objs = ProductIDs.objects.filter(grist_product_id=grist_product_id)
+                
+                if not product_id_objs.exists():
                     skipped_count += 1
+                    skipped_reasons["no_product_id_obj"] += 1
                     continue
                 
-                product_id_obj = ProductIDs.objects.filter(grist_product_id=grist_product_id).first()
-                
-                if not product_id_obj:
-                    skipped_count += 1
-                    continue
-                
+                # ProductIDs modelidagi product field orqali Product modelidan product olinadi
+                product_id_obj = product_id_objs.first()
                 product = product_id_obj.product
                 
-                if product:
-                    product.price_category = price_category_value
-                    product.save()
-                    updated_count += 1
-                else:
+                if not product:
                     skipped_count += 1
-            except Exception:
+                    skipped_reasons["no_product"] += 1
+                    continue
+                
+                # Product ga price_category qo'shiladi
+                product.price_category = price_category_value
+                product.save()
+                updated_count += 1
+                
+            except Exception as e:
                 skipped_count += 1
+                skipped_reasons["exception"] += 1
                 continue
+        
+        print(f"✅ Updated: {updated_count}")
+        print(f"❌ Skipped: {skipped_count}")
+        if skipped_count > 0:
+            print(f"📊 Skipped reasons:")
+            for reason, count in skipped_reasons.items():
+                if count > 0:
+                    print(f"   - {reason}: {count}")
         
         return {
             "success": True,
             "message": "Product price categories muvaffaqiyatli import qilindi",
             "updated": updated_count,
             "skipped": skipped_count,
+            "skipped_reasons": skipped_reasons,
             "total_processed": updated_count + skipped_count
         }
         
@@ -1015,6 +1060,16 @@ def import_product_price_categories():
 
 
 def import_all_products():
+    """
+    Barcha product ma'lumotlarini import qiladi.
+    Ketma-ketlik:
+    1. import_products_from_price() - Productlar va ProductIDs
+    2. import_product_price_categories() - Price categories (Product modeliga qo'shiladi)
+    3. import_product_details() - ProductDetails va ProductImages
+    4. import_product_properties() - ProductProperties
+    5. import_product_characteristics() - ProductCharacteristics
+    6. Cleanup funksiyalari
+    """
     results = {
         "products": None,
         "product_details": None,
@@ -1026,6 +1081,7 @@ def import_all_products():
     }
     
     try:
+        # 1. Productlar import qilish
         products_result = import_products_from_price()
         results["products"] = products_result
         
@@ -1033,9 +1089,11 @@ def import_all_products():
             results["overall_success"] = False
             return results
         
+        # 2. Price categories import qilish (Product modeliga price_category qo'shiladi)
         price_categories_result = import_product_price_categories()
         results["price_categories"] = price_categories_result
         
+        # 3. Product details import qilish
         details_result = import_product_details()
         results["product_details"] = details_result
         
@@ -1043,12 +1101,15 @@ def import_all_products():
             results["overall_success"] = True
             return results
         
+        # 4. Product properties import qilish
         properties_result = import_product_properties()
         results["product_properties"] = properties_result
         
+        # 5. Product characteristics import qilish
         characteristics_result = import_product_characteristics()
         results["product_characteristics"] = characteristics_result
         
+        # 6. Cleanup
         products_deleted, product_ids_deleted = cleanup_removed_products()
         details_deleted, images_deleted = cleanup_removed_product_details()
         characteristics_deleted = cleanup_removed_characteristics()

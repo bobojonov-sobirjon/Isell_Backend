@@ -358,11 +358,21 @@ def post_to_grist_application(counterparty_id, date, stage, risk_category_id, is
     import logging
     logger = logging.getLogger(__name__)
     
+    print(f"[DEBUG] [post_to_grist_application] Called with:")
+    print(f"[DEBUG] [post_to_grist_application]   - counterparty_id: {counterparty_id}")
+    print(f"[DEBUG] [post_to_grist_application]   - date: {date}")
+    print(f"[DEBUG] [post_to_grist_application]   - stage: {stage}")
+    print(f"[DEBUG] [post_to_grist_application]   - risk_category_id: {risk_category_id}")
+    print(f"[DEBUG] [post_to_grist_application]   - issue_limit: {issue_limit}")
+    print(f"[DEBUG] [post_to_grist_application]   - products: {products}")
+    
     if not API_KEY or not DOC_ID or not ISell_APPLICATION:
+        print(f"[DEBUG] [post_to_grist_application] ❌ Missing env vars - API_KEY: {bool(API_KEY)}, DOC_ID: {bool(DOC_ID)}, ISell_APPLICATION: {bool(ISell_APPLICATION)}")
         logger.error("Missing API_KEY, DOC_ID, or ISell_APPLICATION environment variables")
         return None
     
     if not counterparty_id:
+        print(f"[DEBUG] [post_to_grist_application] ❌ Missing counterparty_id")
         logger.error("counterparty_id is required but was not provided")
         return None
     
@@ -424,10 +434,22 @@ def post_to_grist_application(counterparty_id, date, stage, risk_category_id, is
         ]
     }
     
+    print(f"[DEBUG] [post_to_grist_application] URL: {url}")
+    print(f"[DEBUG] [post_to_grist_application] Table name: {ISell_APPLICATION}")
+    print(f"[DEBUG] [post_to_grist_application] Payload: {payload}")
+    print(f"[DEBUG] [post_to_grist_application] Date timestamp: {date_timestamp}")
+    print(f"[DEBUG] [post_to_grist_application] Formatted products: {formatted_products}")
+    
     try:
+        print(f"[DEBUG] [post_to_grist_application] Sending POST request to Grist...")
         response = requests.post(url, json=payload, headers=request_headers)
+        print(f"[DEBUG] [post_to_grist_application] Response status code: {response.status_code}")
+        print(f"[DEBUG] [post_to_grist_application] Response text: {response.text[:500]}")
+        
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        print(f"[DEBUG] [post_to_grist_application] ✅ Success! Response: {result}")
+        return result
     except requests.exceptions.HTTPError as e:
         error_detail = ""
         response_text = ""
@@ -445,11 +467,17 @@ def post_to_grist_application(counterparty_id, date, stage, risk_category_id, is
             logger.error(f"Error parsing error response: {str(ex)}")
         
         status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else 'N/A'
+        print(f"[DEBUG] [post_to_grist_application] ❌ HTTP Error! Status: {status_code}")
+        print(f"[DEBUG] [post_to_grist_application] Error detail: {error_detail}")
+        print(f"[DEBUG] [post_to_grist_application] Response text: {response_text}")
         logger.error(f"HTTP error posting to Grist application: {error_detail}, Status: {status_code}")
         logger.error(f"Response text: {response_text}")
         logger.error(f"Payload was: {payload}")
         return None
     except Exception as e:
+        print(f"[DEBUG] [post_to_grist_application] ❌ Exception! Error: {str(e)}, Type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         logger.error(f"Error posting to Grist application: {str(e)}, Type: {type(e).__name__}")
         logger.error(f"Payload was: {payload}")
         return None

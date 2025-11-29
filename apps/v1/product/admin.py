@@ -9,6 +9,10 @@ from apps.v1.product.models import (
     
 )
 
+@admin.register(ProductRiskCategory)
+class ProductRiskCategoryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'risk_category', 'percentage', 'grist_product_category_id', 'grist_risk_category_id', 'grist_price_category_id')
+    search_fields = ('name', 'risk_category', 'percentage', 'grist_product_category_id', 'grist_risk_category_id', 'grist_price_category_id')
 
 @admin.register(Categories)
 class CategoriesAdmin(admin.ModelAdmin):
