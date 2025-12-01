@@ -384,7 +384,7 @@ def process_sale_data(sale, sale_products, product_price_map, transactions_map=N
     fields = sale.get("fields", {})
     
     total = fields.get("total", 0) or 0
-    remainder = fields.get("remainder", 0) or 0
+    remainder = fields.get("reminder", 0) or 0
     paid = fields.get("paid", 0) or 0
     debet_0 = fields.get("debet_0", 0) or 0
     fact_planned_transactions = fields.get("fact_planned_transactions", [])
