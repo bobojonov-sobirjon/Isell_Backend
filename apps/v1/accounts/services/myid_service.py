@@ -186,19 +186,36 @@ def get_user_data(access_token, code):
             "status_code": response.status_code if 'response' in locals() else None
         }
     except requests.exceptions.RequestException as e:
-        logger.error(f"[get_user_data] Request Exception: {str(e)}")
+        logger.error(f"[get_user_data] Request Exception: {str(e)}", exc_info=True)
         logger.error(f"[get_user_data] ===== REQUEST ERROR =====")
+        status_code = None
+        try:
+            if 'response' in locals() and response is not None:
+                status_code = response.status_code
+        except:
+            pass
         return {
             "success": False,
             "error": str(e),
-            "status_code": response.status_code if 'response' in locals() else None
+            "error_detail": None,
+            "status_code": status_code
         }
     except Exception as e:
-        logger.error(f"[get_user_data] Unexpected error: {str(e)}")
+        logger.error(f"[get_user_data] Unexpected error: {str(e)}", exc_info=True)
         logger.error(f"[get_user_data] ===== UNEXPECTED ERROR =====")
         return {
             "success": False,
             "error": str(e),
+            "error_detail": None,
+            "status_code": None
+        }
+    except:
+        # Final catch-all to ensure we never return None
+        logger.error(f"[get_user_data] Critical error - unknown exception", exc_info=True)
+        return {
+            "success": False,
+            "error": "Unknown error occurred",
+            "error_detail": None,
             "status_code": None
         }
 

@@ -708,11 +708,19 @@ class VerifyMyIDDataView(APIView):
         import logging
         logger = logging.getLogger(__name__)
         
+        logger.debug("[VerifyMyIDDataView] ===== STARTING REQUEST =====")
+        logger.debug(f"[VerifyMyIDDataView] Request query params: {dict(request.query_params)}")
+        
         code = request.query_params.get('code')
         access_token = request.query_params.get('token')
         phone_from_request = request.query_params.get('phone_number')
         
+        logger.debug(f"[VerifyMyIDDataView] Code: {code}")
+        logger.debug(f"[VerifyMyIDDataView] Access token exists: {bool(access_token)}")
+        logger.debug(f"[VerifyMyIDDataView] Phone from request: {phone_from_request}")
+        
         if not code or not access_token:
+            logger.warning("[VerifyMyIDDataView] Missing required parameters")
             return Response(
                 {
                     "success": False,
@@ -721,7 +729,45 @@ class VerifyMyIDDataView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        user_data_result = get_user_data(access_token, code)
+        logger.debug("[VerifyMyIDDataView] Calling get_user_data...")
+        try:
+            user_data_result = get_user_data(access_token, code)
+            logger.debug(f"[VerifyMyIDDataView] get_user_data returned: {type(user_data_result)}")
+            logger.debug(f"[VerifyMyIDDataView] user_data_result is None: {user_data_result is None}")
+            if user_data_result:
+                logger.debug(f"[VerifyMyIDDataView] user_data_result keys: {list(user_data_result.keys()) if isinstance(user_data_result, dict) else 'Not a dict'}")
+                logger.debug(f"[VerifyMyIDDataView] user_data_result success: {user_data_result.get('success') if isinstance(user_data_result, dict) else 'N/A'}")
+        except Exception as e:
+            logger.error(f"[VerifyMyIDDataView] Exception in get_user_data: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "success": False,
+                    "message": "Не удалось получить данные из MyID. Произошла неожиданная ошибка.",
+                    "error": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        if not user_data_result:
+            logger.error("[VerifyMyIDDataView] get_user_data returned None - unexpected error")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Не удалось получить данные из MyID. Произошла неожиданная ошибка."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        if not isinstance(user_data_result, dict):
+            logger.error(f"[VerifyMyIDDataView] user_data_result is not a dict, type: {type(user_data_result)}")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Не удалось получить данные из MyID. Неверный формат ответа.",
+                    "error": f"Expected dict, got {type(user_data_result)}"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
         if not user_data_result.get("success"):
             error = user_data_result.get("error")
@@ -748,26 +794,116 @@ class VerifyMyIDDataView(APIView):
                 status=status.HTTP_400_BAD_REQUEST if error_code == "AUC001" else status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-        myid_data = user_data_result.get("data", {})
-        profile = myid_data.get("data", {}).get("profile", {})
-        common_data = profile.get("common_data", {})
-        doc_data = profile.get("doc_data", {})
-        contacts = profile.get("contacts", {})
-        address_data = profile.get("address", {})
-        permanent_registration = address_data.get("permanent_registration", {})
+        logger.debug(f"[VerifyMyIDDataView] Full user_data_result structure: {str(user_data_result)[:1000]}")
+        logger.debug("[VerifyMyIDDataView] Extracting myid_data...")
+        myid_data = user_data_result.get("data")
+        logger.debug(f"[VerifyMyIDDataView] myid_data type: {type(myid_data)}")
+        logger.debug(f"[VerifyMyIDDataView] myid_data is None: {myid_data is None}")
+        if isinstance(myid_data, dict):
+            logger.debug(f"[VerifyMyIDDataView] myid_data keys: {list(myid_data.keys())}")
+            logger.debug(f"[VerifyMyIDDataView] myid_data structure (first 1000 chars): {str(myid_data)[:1000]}")
         
-        phone = contacts.get("phone", "")
-        first_name = common_data.get("first_name", "")
-        middle_name = common_data.get("middle_name", "")
-        last_name = common_data.get("last_name", "")
-        pinfl = common_data.get("pinfl", "")
-        birth_date_str = common_data.get("birth_date", "")
-        pass_data = doc_data.get("pass_data", "")
+        if myid_data is None:
+            logger.error("[VerifyMyIDDataView] myid_data is None")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Данные пользователя не найдены в ответе MyID",
+                    "error": "myid_data is None"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
-        address = permanent_registration.get("address", "")
-        region = permanent_registration.get("region", "")
-        country = permanent_registration.get("country", "")
-        district = permanent_registration.get("district", "")
+        if not isinstance(myid_data, dict):
+            logger.error(f"[VerifyMyIDDataView] myid_data is not a dict, type: {type(myid_data)}")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Неверный формат данных от MyID",
+                    "error": f"Expected dict for myid_data, got {type(myid_data)}"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        logger.debug(f"[VerifyMyIDDataView] myid_data keys: {list(myid_data.keys())}")
+        
+        # Safe extraction with None checks
+        data_inner = myid_data.get("data")
+        logger.debug(f"[VerifyMyIDDataView] data_inner type: {type(data_inner)}")
+        logger.debug(f"[VerifyMyIDDataView] data_inner is None: {data_inner is None}")
+        
+        if data_inner is None:
+            logger.warning("[VerifyMyIDDataView] data_inner is None, using empty dict")
+            data_inner = {}
+        elif not isinstance(data_inner, dict):
+            logger.warning(f"[VerifyMyIDDataView] data_inner is not a dict, type: {type(data_inner)}, using empty dict")
+            data_inner = {}
+        
+        profile = data_inner.get("profile") if isinstance(data_inner, dict) else {}
+        logger.debug(f"[VerifyMyIDDataView] profile type: {type(profile)}")
+        logger.debug(f"[VerifyMyIDDataView] profile is None: {profile is None}")
+        
+        if profile is None:
+            logger.warning("[VerifyMyIDDataView] profile is None, using empty dict")
+            profile = {}
+        elif not isinstance(profile, dict):
+            logger.warning(f"[VerifyMyIDDataView] profile is not a dict, type: {type(profile)}, using empty dict")
+            profile = {}
+        
+        logger.debug(f"[VerifyMyIDDataView] profile keys: {list(profile.keys()) if isinstance(profile, dict) else 'N/A'}")
+        
+        # Safe extraction with None checks
+        common_data = profile.get("common_data") if isinstance(profile, dict) else None
+        if common_data is None or not isinstance(common_data, dict):
+            logger.debug("[VerifyMyIDDataView] common_data is None or not dict, using empty dict")
+            common_data = {}
+        
+        doc_data = profile.get("doc_data") if isinstance(profile, dict) else None
+        if doc_data is None or not isinstance(doc_data, dict):
+            logger.debug("[VerifyMyIDDataView] doc_data is None or not dict, using empty dict")
+            doc_data = {}
+        
+        contacts = profile.get("contacts") if isinstance(profile, dict) else None
+        if contacts is None or not isinstance(contacts, dict):
+            logger.debug("[VerifyMyIDDataView] contacts is None or not dict, using empty dict")
+            contacts = {}
+        
+        address_data = profile.get("address") if isinstance(profile, dict) else None
+        if address_data is None or not isinstance(address_data, dict):
+            logger.debug("[VerifyMyIDDataView] address_data is None or not dict, using empty dict")
+            address_data = {}
+        
+        permanent_registration = address_data.get("permanent_registration") if isinstance(address_data, dict) else None
+        if permanent_registration is None or not isinstance(permanent_registration, dict):
+            logger.debug("[VerifyMyIDDataView] permanent_registration is None or not dict, using empty dict")
+            permanent_registration = {}
+        
+        logger.debug("[VerifyMyIDDataView] Extracting user data fields...")
+        try:
+            phone = contacts.get("phone", "") if isinstance(contacts, dict) else ""
+            first_name = common_data.get("first_name", "") if isinstance(common_data, dict) else ""
+            middle_name = common_data.get("middle_name", "") if isinstance(common_data, dict) else ""
+            last_name = common_data.get("last_name", "") if isinstance(common_data, dict) else ""
+            pinfl = common_data.get("pinfl", "") if isinstance(common_data, dict) else ""
+            birth_date_str = common_data.get("birth_date", "") if isinstance(common_data, dict) else ""
+            pass_data = doc_data.get("pass_data", "") if isinstance(doc_data, dict) else ""
+            
+            address = permanent_registration.get("address", "") if isinstance(permanent_registration, dict) else ""
+            region = permanent_registration.get("region", "") if isinstance(permanent_registration, dict) else ""
+            country = permanent_registration.get("country", "") if isinstance(permanent_registration, dict) else ""
+            district = permanent_registration.get("district", "") if isinstance(permanent_registration, dict) else ""
+            
+            logger.debug(f"[VerifyMyIDDataView] Extracted values - phone: {phone}, first_name: {first_name}, last_name: {last_name}, pinfl: {pinfl}")
+        except Exception as e:
+            logger.error(f"[VerifyMyIDDataView] Error extracting user data fields: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "success": False,
+                    "message": "Ошибка при извлечении данных пользователя",
+                    "error": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
         city = None
         street = None
