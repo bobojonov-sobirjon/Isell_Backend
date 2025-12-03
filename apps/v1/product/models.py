@@ -40,6 +40,7 @@ class Products(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Цена")
     price_category = models.CharField(max_length=255, null=True, blank=True, verbose_name="Категория цены")
     actual = models.BooleanField(default=True, verbose_name="Актуальный")
+    is_actual = models.BooleanField(default=False, verbose_name="Актуальный (из ГРИСТ)")
     image = models.ImageField(upload_to="products/", null=True, blank=True, verbose_name="Изображение")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
@@ -58,6 +59,7 @@ class ProductIDs(models.Model):
     grist_product_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID продукта в ГРИСТ")
     variation_name = models.CharField(max_length=255, null=True, blank=True, verbose_name="Название вариации")
     variation_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID вариации")
+    is_actual = models.BooleanField(default=False, verbose_name="Актуальный (из ГРИСТ)")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
     

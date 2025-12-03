@@ -362,6 +362,32 @@ class ProductListSerializer(serializers.Serializer):
     def get_variations(self, obj):
         details = self._get_filtered_details(obj)
         
+        # Variatsiyali tovarlar uchun: faqat is_actual=True bo'lgan ProductIDs ga mos keladigan ProductDetails chiqadi
+        product_ids = ProductIDs.objects.filter(product=obj)
+        has_variations = product_ids.exists() and any(
+            pid.variation_name and pid.variation_name.strip() 
+            for pid in product_ids
+        )
+        
+        if has_variations:
+            # Faqat is_actual=True bo'lgan ProductIDs larni olamiz
+            actual_product_ids = list(product_ids.filter(is_actual=True))
+            
+            if not actual_product_ids:
+                # Agar actual=True bo'lgan ProductIDs yo'q bo'lsa, hech narsa chiqmasin
+                return []
+            
+            # ProductDetails larni filtrlash - faqat actual=True bo'lgan variatsiyalarga mos keladiganlar
+            filtered_details = []
+            for detail in details:
+                # ProductDetails dan ProductIDs ni topish
+                matching_product_id = self._find_product_id_for_detail(detail, actual_product_ids)
+                # Agar mos keladigan ProductIDs topilsa va u is_actual=True bo'lsa, qo'shamiz
+                if matching_product_id:
+                    filtered_details.append(detail)
+            
+            details = filtered_details
+        
         min_price = None
         min_price_id = None
         
@@ -376,6 +402,46 @@ class ProductListSerializer(serializers.Serializer):
         context['min_price_id'] = min_price_id
         
         return ProductVariationSerializer(details, many=True, context=context).data
+    
+    def _find_product_id_for_detail(self, detail, product_ids_list):
+        """
+        ProductDetails uchun mos ProductIDs ni topish
+        Faqat actual_product_ids_list dan (is_actual=True) mos keladiganini qaytaradi
+        Agar topilmasa, None qaytaradi
+        """
+        color = detail.color or ""
+        storage = detail.storage or ""
+        sim = detail.sim or ""
+        
+        sim_normalized = sim.replace("+", "").replace(" ", "").upper() if sim else ""
+        
+        for product_id in product_ids_list:
+            if not product_id.variation_name:
+                continue
+            
+            variation_name = product_id.variation_name.upper()
+            
+            color_match = color.upper() in variation_name if color else False
+            storage_match = storage.upper() in variation_name if storage else False
+            
+            sim_match = False
+            if sim:
+                if sim.upper() in variation_name:
+                    sim_match = True
+                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                    sim_match = True
+                elif "SIM" in sim_normalized and "SIM" in variation_name:
+                    sim_match = True
+                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
+                    sim_match = True
+                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
+                    sim_match = True
+            
+            if color_match and storage_match and (sim_match if sim else True):
+                return product_id
+        
+        # Agar mos keladigan ProductIDs topilmasa, None qaytaradi
+        return None
     
     def get_filter_options(self, obj):
         """Get all filter options combined in one object"""

@@ -76,7 +76,7 @@ class ProductIDsInline(admin.TabularInline):
     fk_name = 'product'
     verbose_name = 'Вариации продукта'
     verbose_name_plural = 'Вариации продукта'
-    fields = ('variation_name', 'variation_id', 'grist_product_id')
+    fields = ('variation_name', 'variation_id', 'grist_product_id', 'is_actual')
 
 
 @admin.register(Products)

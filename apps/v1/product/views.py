@@ -132,10 +132,14 @@ class ProductListView(APIView):
     def get(self, request):
         """
         Get all products with filters and pagination
+        Logic:
+        - Variatsiyasiz tovarlar: Products.is_actual = True bo'lsa chiqadi
+        - Variatsiyali tovarlar: kamida bitta ProductIDs.is_actual = True bo'lsa chiqadi
         """
         name = request.query_params.get('name', None)
         category = request.query_params.get('category', None)
         
+        # Barcha productlarni olamiz
         queryset = Products.objects.select_related(
             'category'
         ).prefetch_related(
@@ -143,6 +147,31 @@ class ProductListView(APIView):
             'ids',
             'characteristics__property'
         ).filter(actual=True)
+        
+        # Variatsiyasiz tovarlar uchun: Products.is_actual = True bo'lishi kerak
+        # Variatsiyali tovarlar uchun: kamida bitta ProductIDs.is_actual = True bo'lishi kerak
+        
+        from django.db.models import Q, Exists, OuterRef
+        
+        # Variatsiyasiz tovarlar: is_actual=True va variatsiya yo'q
+        products_without_variations = queryset.filter(
+            is_actual=True
+        ).annotate(
+            has_variations=Exists(
+                ProductIDs.objects.filter(product=OuterRef('pk'))
+            )
+        ).filter(has_variations=False)
+        
+        # Variatsiyali tovarlar: kamida bitta ProductIDs.is_actual = True
+        products_with_variations = queryset.filter(
+            ids__is_actual=True
+        ).distinct()
+        
+        # Ikkala querysetni birlashtiramiz
+        queryset = queryset.filter(
+            Q(id__in=products_without_variations.values_list('id', flat=True)) |
+            Q(id__in=products_with_variations.values_list('id', flat=True))
+        ).distinct()
         
         if name:
             queryset = queryset.filter(name__icontains=name)

@@ -101,16 +101,9 @@ def get_product_price_data():
 
 
 def filter_actual_products(records):
-    if not records:
-        return []
-    
-    actual_products = []
-    for record in records:
-        fields = record.get("fields", {})
-        if fields.get("actual") is True:
-            actual_products.append(record)
-    
-    return actual_products
+    """Bu funksiya endi ishlatilmaydi, lekin eski kod bilan mosligi uchun qoldirilgan"""
+    # Endi barcha productlarni olamiz, actual filter yo'q
+    return records if records else []
 
 
 def get_or_create_category(category_name):
@@ -139,10 +132,10 @@ def is_new_product(variation_name):
     return "NEW" in str(variation_name).upper()
 
 
-def process_products(actual_products):
+def process_products(all_products):
     grouped_products = {}
     
-    for record in actual_products:
+    for record in all_products:
         fields = record.get("fields", {})
         record_id = record.get("id")
         
@@ -152,6 +145,7 @@ def process_products(actual_products):
         variation_name = variation_name_raw.strip() if variation_name_raw else ""
         variation_id = fields.get("variation_id")
         price = fields.get("price")
+        actual = fields.get("actual", False)  # Gristdan actual qiymatini olamiz
         
         if not product_name:
             continue
@@ -166,7 +160,8 @@ def process_products(actual_products):
                     "id": record_id,
                     "variation_name": variation_name,
                     "variation_id": variation_id,
-                    "price": price
+                    "price": price,
+                    "actual": actual
                 }],
                 "is_bu": True
             }
@@ -177,21 +172,47 @@ def process_products(actual_products):
                 grouped_products[key] = {
                     "product_name": product_name,
                     "category_name": category_name,
-                    "price": price if not variation_name else None,
+                    "price": None,  # Dastlab None, keyin actual=True bo'lgan recorddan olamiz
                     "variations": [],
-                    "is_bu": False
+                    "is_bu": False,
+                    "is_actual": False  # Dastlab False, keyin actual=True bo'lsa True qilamiz
                 }
             
+            # Har bir recordni qo'shamiz (actual=True yoki actual=False bo'lishidan qat'iy nazar)
             if record_id:
-                grouped_products[key]["variations"].append({
-                    "id": record_id,
-                    "variation_name": variation_name or "",
-                    "variation_id": variation_id,
-                    "price": price
-                })
+                # Bir xil grist_id bo'lgan variatsiyani qidirib, topilsa yangilaymiz, topilmasa qo'shamiz
+                existing_variation = None
+                for v in grouped_products[key]["variations"]:
+                    if v.get("id") == record_id:
+                        existing_variation = v
+                        break
+                
+                if existing_variation:
+                    # Mavjud variatsiyani yangilaymiz
+                    existing_variation["variation_name"] = variation_name or ""
+                    existing_variation["variation_id"] = variation_id
+                    existing_variation["price"] = price
+                    existing_variation["actual"] = actual
+                else:
+                    # Yangi variatsiyani qo'shamiz
+                    grouped_products[key]["variations"].append({
+                        "id": record_id,
+                        "variation_name": variation_name or "",
+                        "variation_id": variation_id,
+                        "price": price,
+                        "actual": actual
+                    })
             
-            if not variation_name and price:
-                grouped_products[key]["price"] = price
+            # Variatsiyasiz tovar uchun actual va price ni sozlaymiz
+            if not variation_name:
+                # Agar actual=True bo'lsa, is_actual ni True qilamiz va price ni olamiz
+                if actual:
+                    grouped_products[key]["is_actual"] = True
+                    if price:
+                        grouped_products[key]["price"] = price
+                # Agar actual=False bo'lsa va hali is_actual True bo'lmagan bo'lsa, False qilamiz
+                elif not grouped_products[key]["is_actual"]:
+                    grouped_products[key]["is_actual"] = False
     
     return grouped_products
 
@@ -199,8 +220,10 @@ def process_products(actual_products):
 @transaction.atomic
 def save_products_to_db(grouped_products):
     created_count = 0
+    updated_count = 0
     skipped_count = 0
     product_ids_count = 0
+    product_ids_updated_count = 0
     
     for key, product_data in grouped_products.items():
         try:
@@ -209,6 +232,7 @@ def save_products_to_db(grouped_products):
             price = product_data.get("price")
             variations = product_data.get("variations", [])
             is_bu = product_data.get("is_bu", False)
+            is_actual = product_data.get("is_actual", False)  # Variatsiyasiz tovarlar uchun
             
             if not product_name:
                 skipped_count += 1
@@ -219,7 +243,53 @@ def save_products_to_db(grouped_products):
                 skipped_count += 1
                 continue
             
-            if is_bu:
+            # Variatsiyasiz tovarlar uchun - agar barcha variatsiyalar bo'sh bo'lsa yoki variatsiya yo'q bo'lsa
+            has_real_variations = any(v.get("variation_name", "").strip() for v in variations)
+            
+            if not has_real_variations:
+                if is_bu:
+                    product, created = Products.objects.get_or_create(
+                        name=product_name,
+                        category=category,
+                        defaults={
+                            "name": product_name,
+                            "category": category,
+                            "price": None,
+                            "actual": True,
+                            "is_actual": is_actual
+                        }
+                    )
+                else:
+                    product, created = Products.objects.get_or_create(
+                        name=product_name,
+                        category=category,
+                        defaults={
+                            "name": product_name,
+                            "category": category,
+                            "price": price,
+                            "actual": True,
+                            "is_actual": is_actual
+                        }
+                    )
+                
+                if created:
+                    created_count += 1
+                else:
+                    # Mavjud productni yangilaymiz
+                    updated = False
+                    if product.price != price and price is not None:
+                        product.price = price
+                        updated = True
+                    if product.is_actual != is_actual:
+                        product.is_actual = is_actual
+                        updated = True
+                    if updated:
+                        product.save()
+                        updated_count += 1
+            
+            # Variatsiyali tovarlar uchun
+            else:
+                # Product yaratamiz yoki topamiz
                 product, created = Products.objects.get_or_create(
                     name=product_name,
                     category=category,
@@ -227,32 +297,25 @@ def save_products_to_db(grouped_products):
                         "name": product_name,
                         "category": category,
                         "price": None,
-                        "actual": True
+                        "actual": True,
+                        "is_actual": False  # Variatsiyali tovarlarda Product.is_actual = False
                     }
                 )
-            else:
-                product, created = Products.objects.get_or_create(
-                    name=product_name,
-                    category=category,
-                    defaults={
-                        "name": product_name,
-                        "category": category,
-                        "price": price,
-                        "actual": True
-                    }
-                )
+                
+                if created:
+                    created_count += 1
+                elif product.is_actual != False:
+                    # Variatsiyali tovarlarda Product.is_actual har doim False bo'lishi kerak
+                    product.is_actual = False
+                    product.save()
+                    updated_count += 1
             
-            if created:
-                created_count += 1
-            
-            if not created and price and not variations:
-                product.price = price
-                product.save()
-            
+            # Variatsiyalarni saqlaymiz
             for variation in variations:
                 variation_name = variation.get("variation_name", "")
                 variation_id = variation.get("variation_id")
                 grist_id = variation.get("id")
+                variation_actual = variation.get("actual", False)
                 
                 if grist_id:
                     try:
@@ -263,12 +326,28 @@ def save_products_to_db(grouped_products):
                                 "product": product,
                                 "grist_product_id": str(grist_id),
                                 "variation_name": variation_name or "",
-                                "variation_id": str(variation_id) if variation_id else ""
+                                "variation_id": str(variation_id) if variation_id else "",
+                                "is_actual": variation_actual
                             }
                         )
                         
                         if pid_created:
                             product_ids_count += 1
+                        else:
+                            # Mavjud ProductIDs ni yangilaymiz
+                            updated = False
+                            if product_id_obj.variation_name != (variation_name or ""):
+                                product_id_obj.variation_name = variation_name or ""
+                                updated = True
+                            if product_id_obj.variation_id != (str(variation_id) if variation_id else ""):
+                                product_id_obj.variation_id = str(variation_id) if variation_id else ""
+                                updated = True
+                            if product_id_obj.is_actual != variation_actual:
+                                product_id_obj.is_actual = variation_actual
+                                updated = True
+                            if updated:
+                                product_id_obj.save()
+                                product_ids_updated_count += 1
                     except Exception:
                         pass
         
@@ -276,7 +355,7 @@ def save_products_to_db(grouped_products):
             skipped_count += 1
             continue
     
-    return created_count, skipped_count, product_ids_count
+    return created_count, updated_count, skipped_count, product_ids_count, product_ids_updated_count
 
 
 def import_products_from_price():
@@ -288,29 +367,32 @@ def import_products_from_price():
                 "message": "API'dan ma'lumotlar olinmadi"
             }
         
-        actual_products = filter_actual_products(records)
-        if not actual_products:
+        # Endi barcha productlarni olamiz, actual filter yo'q
+        all_products = records
+        if not all_products:
             return {
                 "success": False,
-                "message": "Actual productlar topilmadi"
+                "message": "Productlar topilmadi"
             }
         
-        grouped_products = process_products(actual_products)
+        grouped_products = process_products(all_products)
         if not grouped_products:
             return {
                 "success": False,
                 "message": "Productlar guruhlanmadi"
             }
         
-        created_count, skipped_count, product_ids_count = save_products_to_db(grouped_products)
+        created_count, updated_count, skipped_count, product_ids_count, product_ids_updated_count = save_products_to_db(grouped_products)
         
         return {
             "success": True,
             "message": "Productlar muvaffaqiyatli import qilindi",
             "created": created_count,
+            "updated": updated_count,
             "skipped": skipped_count,
             "product_ids_saved": product_ids_count,
-            "total_processed": created_count + skipped_count
+            "product_ids_updated": product_ids_updated_count,
+            "total_processed": created_count + updated_count + skipped_count
         }
         
     except Exception as e:
@@ -501,9 +583,11 @@ def process_variations_for_products(variations_records):
                     variation_name_from_price = fields.get("variation_name", "").strip()
                     actual = fields.get("actual", False)
                     price_value = fields.get("price")
-                    if actual and record_product_id is not None:
+                    # Endi barcha recordlarni olamiz, actual filter yo'q
+                    if record_product_id is not None:
                         record_id = record.get("id")
                         cache_key = (record_product_id, variation_name_from_price)
+                        # Agar actual bo'lsa, uni cache'ga qo'shamiz (actual bo'lmaganlar ham qo'shiladi)
                         if cache_key not in price_grist_id_cache:
                             price_grist_id_cache[cache_key] = record_id
                         price_cache_key = (record_product_id, record_variation_id)
@@ -706,7 +790,8 @@ def import_product_details():
 @transaction.atomic
 def cleanup_removed_products():
     """
-    Grist bazasida actual=False yoki yo'q bo'lgan Products va ProductIDs ni o'chirish
+    Grist bazasida yo'q bo'lgan Products va ProductIDs ni o'chirish
+    Endi actual=False bo'lganlar ham saqlanadi, faqat Gristda yo'q bo'lganlar o'chiladi
     Returns: (products_deleted, product_ids_deleted)
     """
     products_deleted = 0
@@ -730,18 +815,18 @@ def cleanup_removed_products():
         
         records = data.get("records", [])
         
-        actual_grist_ids = set()
+        # Endi barcha grist_id larni olamiz (actual=True yoki actual=False bo'lishidan qat'iy nazar)
+        all_grist_ids = set()
         for record in records:
-            fields = record.get("fields", {})
-            if fields.get("actual") is True:
-                record_id = record.get("id")
-                if record_id:
-                    actual_grist_ids.add(str(record_id))
+            record_id = record.get("id")
+            if record_id:
+                all_grist_ids.add(str(record_id))
         
         all_product_ids = ProductIDs.objects.all()
         for product_id_obj in all_product_ids:
             grist_id = product_id_obj.grist_product_id
-            if grist_id and grist_id not in actual_grist_ids:
+            # Agar grist_id Gristda yo'q bo'lsa, o'chiramiz
+            if grist_id and grist_id not in all_grist_ids:
                 product = product_id_obj.product
                 product_id_obj.delete()
                 product_ids_deleted += 1
