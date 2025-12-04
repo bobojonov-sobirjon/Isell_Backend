@@ -630,6 +630,10 @@ def process_variations_for_products(variations_records):
         if not matching_product_id_obj:
             continue
         
+        # Faqat is_actual=True bo'lgan ProductIDs uchun ProductDetails yaratamiz/yangilaymiz
+        if not matching_product_id_obj.is_actual:
+            continue
+        
         product = matching_product_id_obj.product
         variation_id = matching_product_id_obj.variation_id
         
@@ -704,10 +708,17 @@ def save_product_details(processed_variations):
                 }
             )
             
-            if not detail_created and price:
-                product_detail.price = price
-                product_detail.battery_capacity = battery_capacity
-                product_detail.save()
+            # Mavjud ProductDetails ni yangilaymiz (price, battery_capacity)
+            if not detail_created:
+                updated = False
+                if price is not None and product_detail.price != price:
+                    product_detail.price = price
+                    updated = True
+                if battery_capacity and product_detail.battery_capacity != battery_capacity:
+                    product_detail.battery_capacity = battery_capacity
+                    updated = True
+                if updated:
+                    product_detail.save()
             
             if detail_created:
                 details_created += 1
