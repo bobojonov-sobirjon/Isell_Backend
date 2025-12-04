@@ -943,6 +943,7 @@ class VerifyMyIDDataView(APIView):
             if not city and district:
                 city = district
         
+        # Phone number ni formatlash: barcha bo'sh joylar va belgilarni olib tashlash
         if phone:
             phone = re.sub(r'[\s\-\+]', '', phone)
         
@@ -958,28 +959,66 @@ class VerifyMyIDDataView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        try:
-            user = CustomUser.objects.get(phone_number=phone)
-        except CustomUser.DoesNotExist:
-            if pinfl:
-                try:
-                    user = CustomUser.objects.get(pnfl=pinfl)
-                    if not user.phone_number or (phone and user.phone_number != phone):
+        # Phone number ni +998XXXXXXXXX formatiga o'tkazish
+        # Avval barcha bo'sh joylarni olib tashlash, lekin + belgisini saqlash
+        if phone:
+            # + belgisini saqlab, barcha bo'sh joylar va boshqa belgilarni olib tashlash
+            has_plus = phone.startswith('+')
+            phone_cleaned = re.sub(r'[\s\-]', '', phone)
+            if not has_plus and phone_cleaned.startswith('+'):
+                has_plus = True
+            
+            # Agar + belgisi bo'lmasa, qo'shish
+            if not phone_cleaned.startswith('+'):
+                if phone_cleaned.startswith('998'):
+                    phone = '+' + phone_cleaned
+                elif phone_cleaned.startswith('8'):
+                    phone = '+998' + phone_cleaned[1:]
+                elif len(phone_cleaned) == 9:
+                    phone = '+998' + phone_cleaned
+                else:
+                    phone = phone_cleaned
+            else:
+                phone = phone_cleaned
+        
+        # User ni qidirish - BIRINCHI PINFL bilan, keyin phone_number bilan
+        user = None
+        user_exists_by_pinfl = False
+        
+        # 1. BIRINCHI PINFL bilan qidirish (agar PINFL mavjud bo'lsa)
+        if pinfl:
+            try:
+                user = CustomUser.objects.get(pnfl=pinfl)
+                user_exists_by_pinfl = True
+                logger.info(f"[VerifyMyIDDataView] User found by PINFL {pinfl} (ID: {user.id})")
+                
+                # Request bodydan kelgan phone_number bilan user topiladi (agar mavjud bo'lsa)
+                if phone:
+                    try:
+                        user_with_phone = CustomUser.objects.get(phone_number=phone)
+                        # Agar bu user boshqa user bo'lsa (PINFL bilan topilgan user emas), uni o'chirish
+                        if user_with_phone.id != user.id:
+                            logger.info(f"[VerifyMyIDDataView] Deleting user with phone {phone} (ID: {user_with_phone.id}) because user exists with PINFL {pinfl} (ID: {user.id})")
+                            user_with_phone.delete()
+                    except CustomUser.DoesNotExist:
+                        pass
+                    
+                    # PINFL bilan topilgan user ning phone_number ni yangilash
+                    if user.phone_number != phone:
+                        logger.info(f"[VerifyMyIDDataView] Updating existing user's phone_number from {user.phone_number} to {phone} (found by PINFL {pinfl})")
                         user.phone_number = phone
                         user.save()
-                except CustomUser.DoesNotExist:
-                    return Response(
-                        {
-                            "success": False,
-                            "message": "Пользователь не найден",
-                            "debug": {
-                                "phone_searched": phone,
-                                "pinfl_searched": pinfl
-                            }
-                        },
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-            else:
+            except CustomUser.DoesNotExist:
+                logger.info(f"[VerifyMyIDDataView] User not found by PINFL {pinfl}, searching by phone_number")
+                pass
+        
+        # 2. Agar PINFL bilan user topilmasa, phone_number bilan qidirish
+        if not user:
+            try:
+                user = CustomUser.objects.get(phone_number=phone)
+                logger.info(f"[VerifyMyIDDataView] User found by phone_number {phone} (ID: {user.id})")
+            except CustomUser.DoesNotExist:
+                # User topilmadi
                 return Response(
                     {
                         "success": False,
@@ -987,6 +1026,7 @@ class VerifyMyIDDataView(APIView):
                         "debug": {
                             "phone_searched": phone,
                             "phone_from_request": phone_from_request,
+                            "pinfl_searched": pinfl if pinfl else None,
                             "pinfl_available": bool(pinfl),
                             "pass_data_available": bool(pass_data)
                         }
@@ -1025,24 +1065,50 @@ class VerifyMyIDDataView(APIView):
         user.is_veriifed_my_id = True
         user.save()
         
+        # Phone number ni +998XXXXXXXXX formatiga o'tkazish (Grist ga yuborish uchun)
         phone_for_grist = phone if phone else phone_from_request
-        try:
-            grist_result = post_to_grist_counterparties(
-                first_name=first_name or "",
-                last_name=last_name or "",
-                middle_name=middle_name or "",
-                pinfl=pinfl or "",
-                date_of_birth=birth_date_str or "",
-                address=address or "",
-                phone_number=phone_for_grist or "",
-                passport_series=pass_data or ""
-            )
-            if grist_result:
-                logger.info(f"[VerifyMyIDDataView] Data posted to Grist successfully: {grist_result}")
+        if phone_for_grist:
+            # + belgisini saqlab, barcha bo'sh joylar va boshqa belgilarni olib tashlash
+            has_plus = phone_for_grist.startswith('+')
+            phone_cleaned = re.sub(r'[\s\-]', '', phone_for_grist)
+            if not has_plus and phone_cleaned.startswith('+'):
+                has_plus = True
+            
+            # Agar + belgisi bo'lmasa, qo'shish
+            if not phone_cleaned.startswith('+'):
+                if phone_cleaned.startswith('998'):
+                    phone_for_grist = '+' + phone_cleaned
+                elif phone_cleaned.startswith('8'):
+                    phone_for_grist = '+998' + phone_cleaned[1:]
+                elif len(phone_cleaned) == 9:
+                    phone_for_grist = '+998' + phone_cleaned
+                else:
+                    phone_for_grist = phone_cleaned
             else:
-                logger.warning(f"[VerifyMyIDDataView] Grist post returned None - check API_KEY, DOC_ID, or network")
-        except Exception as e:
-            logger.error(f"[VerifyMyIDDataView] Error posting to Grist: {str(e)}", exc_info=True)
+                phone_for_grist = phone_cleaned
+        
+        # Grist ga POST qilish - faqat yangi user uchun (PINFL bilan topilgan user uchun emas)
+        # Agar user PINFL bilan topilgan bo'lsa, bu allaqachon mavjud user, shuning uchun Grist ga POST qilmaymiz
+        if not user_exists_by_pinfl:
+            try:
+                grist_result = post_to_grist_counterparties(
+                    first_name=first_name or "",
+                    last_name=last_name or "",
+                    middle_name=middle_name or "",
+                    pinfl=pinfl or "",
+                    date_of_birth=birth_date_str or "",
+                    address=address or "",
+                    phone_number=phone_for_grist or "",
+                    passport_series=pass_data or ""
+                )
+                if grist_result:
+                    logger.info(f"[VerifyMyIDDataView] Data posted to Grist successfully: {grist_result}")
+                else:
+                    logger.warning(f"[VerifyMyIDDataView] Grist post returned None - check API_KEY, DOC_ID, or network")
+            except Exception as e:
+                logger.error(f"[VerifyMyIDDataView] Error posting to Grist: {str(e)}", exc_info=True)
+        else:
+            logger.info(f"[VerifyMyIDDataView] Skipping Grist POST - user already exists (found by PINFL {pinfl})")
         
         user_data = UserSerializer(user).data
         
@@ -1108,6 +1174,28 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
     
     full_name = f"{first_name} {middle_name} {last_name}".strip() if middle_name else f"{first_name} {last_name}".strip()
     
+    # Phone number ni +998XXXXXXXXX formatiga o'tkazish (bo'sh joylar bo'lmasligi kerak)
+    formatted_phone = phone_number or ""
+    if formatted_phone:
+        # + belgisini saqlab, barcha bo'sh joylar va boshqa belgilarni olib tashlash
+        has_plus = formatted_phone.startswith('+')
+        phone_cleaned = re.sub(r'[\s\-]', '', formatted_phone)
+        if not has_plus and phone_cleaned.startswith('+'):
+            has_plus = True
+        
+        # Agar + belgisi bo'lmasa, qo'shish
+        if not phone_cleaned.startswith('+'):
+            if phone_cleaned.startswith('998'):
+                formatted_phone = '+' + phone_cleaned
+            elif phone_cleaned.startswith('8'):
+                formatted_phone = '+998' + phone_cleaned[1:]
+            elif len(phone_cleaned) == 9:
+                formatted_phone = '+998' + phone_cleaned
+            else:
+                formatted_phone = phone_cleaned
+        else:
+            formatted_phone = phone_cleaned
+    
     payload = {
         "records": [
             {
@@ -1117,7 +1205,7 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
                     "address": address or "",
                     "passport_series": passport_series or "",
                     "date_of_birth": date_of_birth or None,
-                    "phone1": phone_number or ""
+                    "phone1": formatted_phone
                 }
             }
         ]
