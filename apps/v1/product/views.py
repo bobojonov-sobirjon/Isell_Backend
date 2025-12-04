@@ -2156,3 +2156,467 @@ class CalculatePaymentScheduleView(APIView):
         logger.info(f"[CalculatePaymentScheduleView] Final response - status: {application_status}, counterparty_id: {counterparty_id_for_response}, ability_to_order: {ability_to_order}, calculation_mode: {calculation_mode}")
         
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+class CalculatePaymentScheduleSimpleView(APIView):
+    """
+    Simplified view for calculating payment schedule - only returns monthly_payments and product_list.
+    Does NOT post to ISell_APPLICATION or request ISell_COUNTERPARTIES.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        tags=['Продукты'],
+        operation_summary="Расчет графика платежей (упрощенный)",
+        operation_description=""" 
+        Рассчитывает график платежей на основе режима расчета.
+        Возвращает только monthly_payments и product_list.
+        Не создает заявки в Grist и не запрашивает данные о контрагентах.
+        
+        **Режимы расчета:**
+        - Mode 1: Общий первоначальный взнос и период рассрочки для всех продуктов
+        - Mode 2: Индивидуальный первоначальный взнос и период рассрочки для каждого продукта
+        """,
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['calculation_mode', 'product_list'],
+            properties={
+                'calculation_mode': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='Режим расчета (1 или 2)',
+                    enum=[1, 2]
+                ),
+                'total_advance_payment': openapi.Schema(
+                    type=openapi.TYPE_NUMBER,
+                    description='Общий первоначальный взнос (только для mode 1)'
+                ),
+                'tariff_id': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='ID тарифа (только для mode 1)'
+                ),
+                'product_list': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    description='Список продуктов',
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'product_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                            'quantity': openapi.Schema(type=openapi.TYPE_INTEGER),
+                            'variation_id': openapi.Schema(type=openapi.TYPE_INTEGER, x_nullable=True, description='ID вариации продукта'),
+                            'tariff_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID тарифа (только для mode 2)'),
+                            'advance_payment': openapi.Schema(type=openapi.TYPE_NUMBER, description='Первоначальный взнос (только для mode 2)'),
+                        }
+                    )
+                ),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="График платежей (упрощенный)",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "monthly_payments": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    "number": openapi.Schema(type=openapi.TYPE_INTEGER),
+                                    "date": openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATE),
+                                    "payment": openapi.Schema(type=openapi.TYPE_NUMBER)
+                                }
+                            )
+                        ),
+                        "product_list": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            description="Список продуктов с информацией о расчете",
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    "product_id": openapi.Schema(type=openapi.TYPE_INTEGER),
+                                    "quantity": openapi.Schema(type=openapi.TYPE_INTEGER),
+                                    "variation_id": openapi.Schema(type=openapi.TYPE_INTEGER, x_nullable=True),
+                                    "tariff_id": openapi.Schema(type=openapi.TYPE_INTEGER, x_nullable=True),
+                                    "advance_payment": openapi.Schema(type=openapi.TYPE_NUMBER)
+                                }
+                            )
+                        )
+                    }
+                )
+            ),
+            400: "Неверные данные запроса",
+            404: "Режим расчета, продукт или тариф не найден"
+        }
+    )
+    def post(self, request):
+        calculation_mode = request.data.get('calculation_mode')
+        product_list = request.data.get('product_list', [])
+        
+        if calculation_mode is None:
+            return Response(
+                {"error": "Поле 'calculation_mode' обязательно"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not product_list:
+            return Response(
+                {"error": "Поле 'product_list' обязательно и не может быть пустым"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if calculation_mode not in [1, 2]:
+            return Response(
+                {"error": "calculation_mode должен быть 1 или 2"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        monthly_payments = []
+        
+        if calculation_mode == 1:
+            total_down_payment = request.data.get('total_advance_payment')
+            tariff_id = request.data.get('tariff_id')
+            
+            if total_down_payment is None:
+                return Response(
+                    {"error": "Поле 'total_advance_payment' обязательно для режима 1"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if tariff_id is None:
+                return Response(
+                    {"error": "Поле 'tariff_id' обязательно для режима 1"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            for item in product_list:
+                if 'product_id' not in item:
+                    return Response(
+                        {"error": "Каждый элемент product_list должен содержать 'product_id'"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            tariff = get_object_or_404(Tariffs, id=tariff_id)
+            
+            total_product_sum = 0
+            products_data = []
+            
+            # OPTIMIZATION: Barcha productlarni bir marta olish (bulk fetch)
+            product_ids = [item.get('product_id') for item in product_list]
+            products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
+            products_dict = {p.id: p for p in products}
+            
+            # OPTIMIZATION: Barcha ProductIDs ni bir marta olish
+            product_ids_objs = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
+            product_ids_dict = {}  # product_id -> [ProductIDs objects]
+            variation_dict = {}    # (product_id, variation_id) -> ProductIDs object
+            
+            for pid_obj in product_ids_objs:
+                # Asosiy mapping
+                if pid_obj.product_id not in product_ids_dict:
+                    product_ids_dict[pid_obj.product_id] = []
+                product_ids_dict[pid_obj.product_id].append(pid_obj)
+                
+                # Variation mapping
+                key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
+                variation_dict[key] = pid_obj
+            
+            for item in product_list:
+                product_id = item.get('product_id')
+                quantity = item.get('quantity', 1)
+                variation_id = item.get('variation_id')
+                
+                product = products_dict.get(product_id)
+                if not product:
+                    continue
+                
+                product_price = None
+                
+                if variation_id:
+                    # OPTIMIZATION: Dictionary dan olish
+                    key = (product_id, str(variation_id))
+                    product_id_obj = variation_dict.get(key)
+                    if product_id_obj and product_id_obj.variation_name:
+                        variation_name = product_id_obj.variation_name.upper()
+                        details = product.details.all()
+                        
+                        for detail in details:
+                            color = detail.color or ""
+                            storage = detail.storage or ""
+                            sim = detail.sim or ""
+                            
+                            color_match = color.upper() in variation_name if color else False
+                            storage_match = storage.upper() in variation_name if storage else False
+                            
+                            sim_match = False
+                            if sim:
+                                sim_normalized = sim.replace("+", "").replace(" ", "").upper()
+                                if sim.upper() in variation_name:
+                                    sim_match = True
+                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                                    sim_match = True
+                                elif "SIM" in sim_normalized and "SIM" in variation_name:
+                                    sim_match = True
+                                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
+                                    sim_match = True
+                                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
+                                    sim_match = True
+                            
+                            if color_match and storage_match and (sim_match if sim else True):
+                                if detail.price is not None:
+                                    product_price = float(detail.price)
+                                    break
+                
+                if product_price is None:
+                    if product.price is not None:
+                        product_price = float(product.price)
+                    else:
+                        details = product.details.all()
+                        if details.exists():
+                            prices = [float(detail.price) for detail in details if detail.price is not None]
+                            if prices:
+                                product_price = min(prices)
+                
+                if product_price is None:
+                    continue
+                
+                total_product_sum += product_price * quantity
+                
+                # OPTIMIZATION: Dictionary dan olish
+                product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
+                response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
+                
+                products_data.append({
+                    'product': product,
+                    'quantity': quantity,
+                    'price': product_price,
+                    'variation_id': response_variation_id
+                })
+            
+            total_product_sum = max(0, total_product_sum - float(total_down_payment))
+            
+            if total_product_sum > 0:
+                monthly_payment_amount = round(
+                    total_product_sum * get_tariff_coefficient_ratio(tariff)
+                )
+            else:
+                monthly_payment_amount = 0
+            
+            current_date = datetime.now()
+            
+            if monthly_payment_amount > 0:
+                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
+                for month_num in range(1, safe_payments_count + 1):
+                    year = current_date.year
+                    month = current_date.month + month_num
+                    day = current_date.day
+                    
+                    while month > 12:
+                        month -= 12
+                        year += 1
+                    
+                    max_day = monthrange(year, month)[1]
+                    if day > max_day:
+                        day = max_day
+                    
+                    payment_date = datetime(year, month, day)
+                    
+                    if tariff.offset_days:
+                        payment_date = payment_date + timedelta(days=tariff.offset_days)
+                    
+                    monthly_payments.append({
+                        "number": month_num,
+                        "date": payment_date.strftime("%d/%m/%y"),
+                        "payment": monthly_payment_amount
+                    })
+            
+            response_product_list = []
+            for prod_data in products_data:
+                product = prod_data['product']
+                quantity = prod_data['quantity']
+                variation_id = prod_data.get('variation_id')
+                
+                response_product_list.append({
+                    "product_id": product.id,
+                    "quantity": quantity,
+                    "variation_id": int(variation_id) if variation_id else None,
+                    "tariff_id": int(tariff_id) if tariff_id else None,
+                    "advance_payment": round(float(total_down_payment) / len(products_data), 2) if products_data else 0
+                })
+        
+        elif calculation_mode == 2:
+            merged_payments = {}
+            max_months = 0
+            
+            # OPTIMIZATION: Barcha productlarni bir marta olish (bulk fetch)
+            product_ids = [item.get('product_id') for item in product_list]
+            products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
+            products_dict = {p.id: p for p in products}
+            
+            # OPTIMIZATION: Barcha tarifflarni bir marta olish
+            tariff_ids = [item.get('tariff_id') for item in product_list if item.get('tariff_id')]
+            tariffs = Tariffs.objects.filter(id__in=tariff_ids)
+            tariffs_dict = {t.id: t for t in tariffs}
+            
+            # OPTIMIZATION: Barcha ProductIDs ni bir marta olish
+            product_ids_objs_mode2 = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
+            product_ids_dict_mode2 = {}  # product_id -> [ProductIDs objects]
+            variation_dict_mode2 = {}    # (product_id, variation_id) -> ProductIDs object
+            
+            for pid_obj in product_ids_objs_mode2:
+                # Asosiy mapping
+                if pid_obj.product_id not in product_ids_dict_mode2:
+                    product_ids_dict_mode2[pid_obj.product_id] = []
+                product_ids_dict_mode2[pid_obj.product_id].append(pid_obj)
+                
+                # Variation mapping
+                key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
+                variation_dict_mode2[key] = pid_obj
+            
+            for item in product_list:
+                product_id = item.get('product_id')
+                quantity = item.get('quantity', 1)
+                variation_id = item.get('variation_id')
+                item_tariff_id = item.get('tariff_id')
+                item_advance_payment = item.get('advance_payment', 0)
+                
+                if not item_tariff_id:
+                    continue
+                
+                tariff = tariffs_dict.get(item_tariff_id)
+                if not tariff:
+                    continue
+                
+                product = products_dict.get(product_id)
+                if not product:
+                    continue
+                
+                product_price = None
+                
+                if variation_id:
+                    key = (product_id, str(variation_id))
+                    product_id_obj = variation_dict_mode2.get(key)
+                    if product_id_obj and product_id_obj.variation_name:
+                        variation_name = product_id_obj.variation_name.upper()
+                        details = product.details.all()
+                        
+                        for detail in details:
+                            color = detail.color or ""
+                            storage = detail.storage or ""
+                            sim = detail.sim or ""
+                            
+                            color_match = color.upper() in variation_name if color else False
+                            storage_match = storage.upper() in variation_name if storage else False
+                            
+                            sim_match = False
+                            if sim:
+                                sim_normalized = sim.replace("+", "").replace(" ", "").upper()
+                                if sim.upper() in variation_name:
+                                    sim_match = True
+                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                                    sim_match = True
+                                elif "SIM" in sim_normalized and "SIM" in variation_name:
+                                    sim_match = True
+                                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
+                                    sim_match = True
+                                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
+                                    sim_match = True
+                            
+                            if color_match and storage_match and (sim_match if sim else True):
+                                if detail.price is not None:
+                                    product_price = float(detail.price)
+                                    break
+                
+                if product_price is None:
+                    if product.price is not None:
+                        product_price = float(product.price)
+                    else:
+                        details = product.details.all()
+                        if details.exists():
+                            prices = [float(detail.price) for detail in details if detail.price is not None]
+                            if prices:
+                                product_price = min(prices)
+                
+                if product_price is None:
+                    continue
+                
+                total_product_price = product_price * quantity
+                total_after_advance = max(0, total_product_price - float(item_advance_payment))
+                
+                if total_after_advance > 0:
+                    monthly_payment = round(
+                        total_after_advance * get_tariff_coefficient_ratio(tariff)
+                    )
+                else:
+                    monthly_payment = 0
+                
+                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
+                
+                if safe_payments_count > max_months:
+                    max_months = safe_payments_count
+                
+                current_date = datetime.now()
+                
+                if monthly_payment > 0:
+                    for month_num in range(1, safe_payments_count + 1):
+                        year = current_date.year
+                        month = current_date.month + month_num
+                        day = current_date.day
+                        
+                        while month > 12:
+                            month -= 12
+                            year += 1
+                        
+                        max_day = monthrange(year, month)[1]
+                        if day > max_day:
+                            day = max_day
+                        
+                        payment_date = datetime(year, month, day)
+                        
+                        if tariff.offset_days:
+                            payment_date = payment_date + timedelta(days=tariff.offset_days)
+                        
+                        date_key = payment_date.strftime("%d/%m/%y")
+                        
+                        if date_key not in merged_payments:
+                            merged_payments[date_key] = {
+                                "number": month_num,
+                                "date": date_key,
+                                "payment": 0
+                            }
+                        
+                        merged_payments[date_key]["payment"] += monthly_payment
+            
+            # Convert merged_payments to list and sort by number
+            monthly_payments = sorted(merged_payments.values(), key=lambda x: x["number"])
+            
+            response_product_list = []
+            for item in product_list:
+                product_id = item.get('product_id')
+                quantity = item.get('quantity', 1)
+                item_advance_payment = item.get('advance_payment', 0)
+                item_tariff_id = item.get('tariff_id')
+                
+                try:
+                    product = products_dict.get(product_id)
+                    if not product:
+                        continue
+                    
+                    product_id_obj = product_ids_dict_mode2.get(product_id, [None])[0] if product_ids_dict_mode2.get(product_id) else None
+                    variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
+                    
+                    response_product_list.append({
+                        "product_id": product.id,
+                        "quantity": quantity,
+                        "variation_id": int(variation_id) if variation_id else None,
+                        "tariff_id": int(item_tariff_id) if item_tariff_id else None,
+                        "advance_payment": float(item_advance_payment)
+                    })
+                except Exception:
+                    continue
+        
+        response_data = {
+            "monthly_payments": monthly_payments,
+            "product_list": response_product_list
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)

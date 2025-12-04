@@ -4,7 +4,8 @@ from apps.v1.product.views import (
     ProductListView,
     ProductDetailView,
     CalculateMonthlyPaymentView,
-    CalculatePaymentScheduleView
+    CalculatePaymentScheduleView,
+    CalculatePaymentScheduleSimpleView
 )
 from apps.v1.order.views import TariffsListView
 
@@ -23,6 +24,9 @@ urlpatterns = [
     
     # Расчет графика платежей
     path('calculate-schedule/', CalculatePaymentScheduleView.as_view(), name='calculate-payment-schedule'),
+    
+    # Расчет графика платежей (упрощенный - только monthly_payments и product_list)
+    path('calculate-schedule-simple/', CalculatePaymentScheduleSimpleView.as_view(), name='calculate-payment-schedule-simple'),
     
     # Список тарифов
     path('tariffs/', TariffsListView.as_view(), name='tariffs_list'),
