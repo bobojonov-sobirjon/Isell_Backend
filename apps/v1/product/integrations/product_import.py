@@ -348,10 +348,12 @@ def save_products_to_db(grouped_products):
                             if updated:
                                 product_id_obj.save()
                                 product_ids_updated_count += 1
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"Error saving ProductIDs for grist_id {grist_id}, product: {product_name}: {str(e)}", exc_info=True)
                         pass
         
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error processing product {key}: {str(e)}", exc_info=True)
             skipped_count += 1
             continue
     
@@ -1129,6 +1131,7 @@ def import_product_price_categories():
             except Exception as e:
                 skipped_count += 1
                 skipped_reasons["exception"] += 1
+                logger.error(f"Error updating product price category for grist_id {product_id_from_products}: {str(e)}", exc_info=True)
                 continue
         
         print(f"✅ Updated: {updated_count}")
