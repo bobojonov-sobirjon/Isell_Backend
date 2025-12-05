@@ -96,39 +96,55 @@ class PhoneLoginView(APIView):
         
         phone_number = serializer.validated_data['phone_number']
         
+        # Phone number ga + belgisi qo'shish (agar yo'q bo'lsa)
+        phone_with_plus = phone_number
+        if not phone_with_plus.startswith('+'):
+            phone_with_plus = '+' + phone_with_plus
+        
         try:
-            user = CustomUser.objects.get(phone_number=phone_number)
+            # Avval + bilan qidirish
+            user = CustomUser.objects.get(phone_number=phone_with_plus)
             created = False
         except CustomUser.DoesNotExist:
-            username_exists = CustomUser.objects.filter(username=phone_number).exists()
-            if username_exists:
-                import uuid
-                username = f"{phone_number}_{uuid.uuid4().hex[:8]}"
-            else:
-                username = phone_number
-            
+            # Agar + bilan topilmasa, + siz qidirish
             try:
-                user = CustomUser.objects.create(
-                    phone_number=phone_number,
-                    username=username,
-                    is_active=True
-                )
-                created = True
-            except Exception as e:
-                import uuid
-                username = f"{phone_number}_{uuid.uuid4().hex[:8]}"
-                user = CustomUser.objects.create(
-                    phone_number=phone_number,
-                    username=username,
-                    is_active=True
-                )
-                created = True
+                user = CustomUser.objects.get(phone_number=phone_number)
+                created = False
+                # Phone number ni + bilan yangilash
+                if user.phone_number != phone_with_plus:
+                    user.phone_number = phone_with_plus
+                    user.save(update_fields=['phone_number'])
+            except CustomUser.DoesNotExist:
+                # Username yaratish (+ bilan)
+                username_with_plus = phone_with_plus
+                username_exists = CustomUser.objects.filter(username=username_with_plus).exists()
+                if username_exists:
+                    import uuid
+                    username_with_plus = f"{phone_with_plus}_{uuid.uuid4().hex[:8]}"
+                
+                try:
+                    user = CustomUser.objects.create(
+                        phone_number=phone_with_plus,
+                        username=username_with_plus,
+                        is_active=True
+                    )
+                    created = True
+                except Exception as e:
+                    import uuid
+                    username_with_plus = f"{phone_with_plus}_{uuid.uuid4().hex[:8]}"
+                    user = CustomUser.objects.create(
+                        phone_number=phone_with_plus,
+                        username=username_with_plus,
+                        is_active=True
+                    )
+                    created = True
         else:
-            if not user.username or user.username != phone_number:
-                username_exists = CustomUser.objects.filter(username=phone_number).exclude(id=user.id).exists()
+            # Username ni ham + bilan yangilash (agar kerak bo'lsa)
+            if not user.username or user.username != phone_with_plus:
+                username_exists = CustomUser.objects.filter(username=phone_with_plus).exclude(id=user.id).exists()
                 if not username_exists:
                     try:
-                        user.username = phone_number
+                        user.username = phone_with_plus
                         user.save(update_fields=['username'])
                     except Exception:
                         pass
@@ -981,57 +997,98 @@ class VerifyMyIDDataView(APIView):
             else:
                 phone = phone_cleaned
         
-        # User ni qidirish - BIRINCHI PINFL bilan, keyin phone_number bilan
+        # User ni qidirish - BIRINCHI phone_number bilan, keyin PINFL bilan
         user = None
         user_exists_by_pinfl = False
+        user_found_by_phone = False
         
-        # 1. BIRINCHI PINFL bilan qidirish (agar PINFL mavjud bo'lsa)
-        if pinfl:
+        # 1. BIRINCHI phone_number bilan qidirish
+        if phone:
+            try:
+                user = CustomUser.objects.get(phone_number=phone)
+                user_found_by_phone = True
+                logger.info(f"[VerifyMyIDDataView] User found by phone_number {phone} (ID: {user.id})")
+            except CustomUser.DoesNotExist:
+                logger.info(f"[VerifyMyIDDataView] User not found by phone_number {phone}")
+                pass
+        
+        # 2. Agar phone_number bilan user topilgan bo'lsa, PINFL bor yo'qligini tekshiramiz
+        if user_found_by_phone:
+            # PINFL bor yo'qligini tekshiramiz
+            if pinfl:
+                try:
+                    user_with_pinfl = CustomUser.objects.get(pnfl=pinfl)
+                    
+                    # Agar PINFL bilan topilgan user boshqa user bo'lsa (phone bilan topilgan user emas)
+                    if user_with_pinfl.id != user.id:
+                        logger.info(f"[VerifyMyIDDataView] User found by PINFL {pinfl} (ID: {user_with_pinfl.id}) is different from user found by phone {phone} (ID: {user.id})")
+                        logger.info(f"[VerifyMyIDDataView] Deleting user with phone {phone} (ID: {user.id}) because user exists with PINFL {pinfl} (ID: {user_with_pinfl.id})")
+                        # Phone bilan topilgan userni o'chirish
+                        user.delete()
+                        # PINFL bilan topilgan userni o'zgaruvchiga qo'yish
+                        user = user_with_pinfl
+                        user_exists_by_pinfl = True
+                        # PINFL bilan topilgan user ning phone_number ni yangilash
+                        if user.phone_number != phone:
+                            logger.info(f"[VerifyMyIDDataView] Updating existing user's phone_number from {user.phone_number} to {phone} (found by PINFL {pinfl})")
+                            user.phone_number = phone
+                            user.save()
+                    else:
+                        # Agar bir xil user bo'lsa, PINFL bilan topilgan deb belgilaymiz
+                        user_exists_by_pinfl = True
+                        logger.info(f"[VerifyMyIDDataView] User found by phone {phone} and PINFL {pinfl} is the same user (ID: {user.id})")
+                except CustomUser.DoesNotExist:
+                    # PINFL bilan user topilmadi, phone bilan topilgan userni ishlatamiz va PINFL ni yangilaymiz
+                    logger.info(f"[VerifyMyIDDataView] User not found by PINFL {pinfl}, using user found by phone {phone} (ID: {user.id})")
+                    pass
+        
+        # 3. Agar phone_number bilan user topilmasa va PINFL mavjud bo'lsa, PINFL bilan qidirish
+        if not user and pinfl:
             try:
                 user = CustomUser.objects.get(pnfl=pinfl)
                 user_exists_by_pinfl = True
                 logger.info(f"[VerifyMyIDDataView] User found by PINFL {pinfl} (ID: {user.id})")
                 
-                # Request bodydan kelgan phone_number bilan user topiladi (agar mavjud bo'lsa)
-                if phone:
-                    try:
-                        user_with_phone = CustomUser.objects.get(phone_number=phone)
-                        # Agar bu user boshqa user bo'lsa (PINFL bilan topilgan user emas), uni o'chirish
-                        if user_with_phone.id != user.id:
-                            logger.info(f"[VerifyMyIDDataView] Deleting user with phone {phone} (ID: {user_with_phone.id}) because user exists with PINFL {pinfl} (ID: {user.id})")
-                            user_with_phone.delete()
-                    except CustomUser.DoesNotExist:
-                        pass
-                    
-                    # PINFL bilan topilgan user ning phone_number ni yangilash
-                    if user.phone_number != phone:
-                        logger.info(f"[VerifyMyIDDataView] Updating existing user's phone_number from {user.phone_number} to {phone} (found by PINFL {pinfl})")
-                        user.phone_number = phone
-                        user.save()
+                # PINFL bilan topilgan user ning phone_number ni yangilash
+                if phone and user.phone_number != phone:
+                    logger.info(f"[VerifyMyIDDataView] Updating existing user's phone_number from {user.phone_number} to {phone} (found by PINFL {pinfl})")
+                    user.phone_number = phone
+                    user.save()
             except CustomUser.DoesNotExist:
-                logger.info(f"[VerifyMyIDDataView] User not found by PINFL {pinfl}, searching by phone_number")
+                logger.info(f"[VerifyMyIDDataView] User not found by PINFL {pinfl}")
                 pass
         
-        # 2. Agar PINFL bilan user topilmasa, phone_number bilan qidirish
+        # 4. Agar hali ham user topilmasa, yangi user yaratamiz (error qaytarmaymiz)
         if not user:
+            logger.info(f"[VerifyMyIDDataView] User not found, creating new user with phone={phone}, pinfl={pinfl}")
+            
+            # Username yaratish
+            import uuid
+            if phone:
+                username = phone
+                if CustomUser.objects.filter(username=username).exists():
+                    username = f"{phone}_{uuid.uuid4().hex[:8]}"
+            else:
+                username = f"user_{uuid.uuid4().hex[:8]}"
+            
+            # Yangi user yaratish
             try:
-                user = CustomUser.objects.get(phone_number=phone)
-                logger.info(f"[VerifyMyIDDataView] User found by phone_number {phone} (ID: {user.id})")
-            except CustomUser.DoesNotExist:
-                # User topilmadi
-                return Response(
-                    {
-                        "success": False,
-                        "message": "Пользователь не найден. Убедитесь, что вы передали phone_number в запросе или что My ID вернул корректные данные.",
-                        "debug": {
-                            "phone_searched": phone,
-                            "phone_from_request": phone_from_request,
-                            "pinfl_searched": pinfl if pinfl else None,
-                            "pinfl_available": bool(pinfl),
-                            "pass_data_available": bool(pass_data)
-                        }
-                    },
-                    status=status.HTTP_404_NOT_FOUND
+                user = CustomUser.objects.create(
+                    phone_number=phone,
+                    username=username,
+                    pnfl=pinfl if pinfl else None,
+                    is_active=True
+                )
+                logger.info(f"[VerifyMyIDDataView] New user created (ID: {user.id}, phone: {user.phone_number}, PINFL: {user.pnfl})")
+            except Exception as e:
+                logger.error(f"[VerifyMyIDDataView] Error creating user: {str(e)}", exc_info=True)
+                # Agar yaratishda xatolik bo'lsa, yana bir bor urinib ko'ramiz
+                username = f"{phone}_{uuid.uuid4().hex[:8]}" if phone else f"user_{uuid.uuid4().hex[:8]}"
+                user = CustomUser.objects.create(
+                    phone_number=phone,
+                    username=username,
+                    pnfl=pinfl if pinfl else None,
+                    is_active=True
                 )
         
         if first_name:
