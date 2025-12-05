@@ -73,6 +73,7 @@ def get_tariffs():
             payments_count = fields.get('payments_count', 0)
             offset = fields.get('offset', 0)
             tariff_type = fields.get('type', '')
+            for_mobile_app = fields.get('for_mobile_app', False)
             coefficient = fields.get('coefficient', 1.0)
             
             print(f"[ORDER_LIST] Processing tariff: {name} (ID: {grist_id})")
@@ -85,6 +86,7 @@ def get_tariffs():
                     'payments_count': payments_count,
                     'offset_days': offset,
                     'type': tariff_type,
+                    'for_mobile_app': for_mobile_app,
                     'coefficient': coefficient,
                     'is_active': True
                 }

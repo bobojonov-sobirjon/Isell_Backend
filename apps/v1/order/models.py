@@ -9,6 +9,7 @@ class Tariffs(models.Model):
     offset_days = models.IntegerField(null=True, blank=True, verbose_name="Количество дней отсрочки")
     type = models.CharField(max_length=255, null=True, blank=True, verbose_name="Тип тарифа")
     grist_tariff_id = models.CharField(max_length=255, null=True, blank=True, verbose_name="ID тарифа в ГРИСТ")
+    for_mobile_app = models.BooleanField(default=False, verbose_name="Для мобильного приложения", null=True, blank=True)
     coefficient = models.FloatField(null=True, blank=True, verbose_name="Коэффициент")
     is_active = models.BooleanField(default=True, verbose_name="Активен")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")

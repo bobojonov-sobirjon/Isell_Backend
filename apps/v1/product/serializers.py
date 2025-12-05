@@ -504,8 +504,8 @@ class ProductListSerializer(serializers.Serializer):
                     color_match = True
                     score += 2
             
-            # Storage match
-            storage_match = False
+            # Storage match - agar storage bo'sh bo'lsa, match=True (storage optional)
+            storage_match = True  # Default to True if no storage
             if storage:
                 # "128GB" ni "128GB" yoki "128 GB" formatida tekshirish
                 if storage in variation_name:
@@ -519,6 +519,9 @@ class ProductListSerializer(serializers.Serializer):
                 elif any(sw in variation_name for sw in storage.split() if sw and len(sw) > 1):
                     storage_match = True
                     score += 2
+                else:
+                    # Agar storage bor lekin variation_name da topilmasa, storage_match=False
+                    storage_match = False
             
             # SIM match (more flexible) - SIM optional, agar variation_name da SIM yo'q bo'lsa, match=True
             sim_match = True  # Default to True
@@ -553,9 +556,6 @@ class ProductListSerializer(serializers.Serializer):
                     else:
                         # Agar variation_name da SIM bor lekin match topilmasa, sim_match=False
                         sim_match = False
-                else:
-                    # Agar variation_name da SIM yo'q bo'lsa, sim_match=True (SIM optional)
-                    sim_match = True
             
             # Match if color and storage match (sim is optional)
             if color_match and storage_match and sim_match:

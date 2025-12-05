@@ -69,7 +69,7 @@ class TariffsListView(APIView):
         }
     )
     def get(self, request):
-        tariffs = Tariffs.objects.filter(is_active=True)
+        tariffs = Tariffs.objects.filter(is_active=True, for_mobile_app=True)
         
         name = request.query_params.get('name', None)
         if name:
