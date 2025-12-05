@@ -283,16 +283,30 @@ class VerifySMSCodeView(APIView):
         phone_number = serializer.validated_data['phone_number']
         code = serializer.validated_data['code']
         
+        # Phone number ga + belgisi qo'shish (agar yo'q bo'lsa)
+        phone_with_plus = phone_number
+        if not phone_with_plus.startswith('+'):
+            phone_with_plus = '+' + phone_with_plus
+        
+        # Avval + bilan qidirish
         try:
-            user = CustomUser.objects.get(phone_number=phone_number)
+            user = CustomUser.objects.get(phone_number=phone_with_plus)
         except CustomUser.DoesNotExist:
-            return Response(
-                {
-                    "success": False,
-                    "message": "Пользователь не найден"
-                },
-                status=status.HTTP_404_NOT_FOUND
-            )
+            # Agar + bilan topilmasa, + siz qidirish
+            try:
+                user = CustomUser.objects.get(phone_number=phone_number)
+                # Phone number ni + bilan yangilash
+                if user.phone_number != phone_with_plus:
+                    user.phone_number = phone_with_plus
+                    user.save(update_fields=['phone_number'])
+            except CustomUser.DoesNotExist:
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Пользователь не найден"
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
         
         try:
             sms_code = SmsCode.objects.filter(
