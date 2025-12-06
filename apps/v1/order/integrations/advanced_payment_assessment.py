@@ -418,7 +418,6 @@ def post_to_grist_application(counterparty_id, date, stage, risk_category_id, is
         "counterparty_id": counterparty_id,
         "date": date_timestamp if date_timestamp else date,
         "stage": stage,
-        "issue_limit": issue_limit,
         "products": formatted_products
     }
     
