@@ -275,19 +275,15 @@ class VerifySMSCodeView(APIView):
         phone_number = serializer.validated_data['phone_number']
         code = serializer.validated_data['code']
         
-        # Phone number ga + belgisi qo'shish (agar yo'q bo'lsa)
         phone_with_plus = phone_number
         if not phone_with_plus.startswith('+'):
             phone_with_plus = '+' + phone_with_plus
         
-        # Avval + bilan qidirish
         try:
             user = CustomUser.objects.get(phone_number=phone_with_plus)
         except CustomUser.DoesNotExist:
-            # Agar + bilan topilmasa, + siz qidirish
             try:
                 user = CustomUser.objects.get(phone_number=phone_number)
-                # Phone number ni + bilan yangilash
                 if user.phone_number != phone_with_plus:
                     user.phone_number = phone_with_plus
                     user.save(update_fields=['phone_number'])
@@ -332,33 +328,10 @@ class VerifySMSCodeView(APIView):
             expires_at__lt=timezone.now()
         ).delete()
         
-        if not user.is_veriifed_my_id:
-            return Response(
-                {
-                    "success": True,
-                    "message": "Код подтвержден. Требуется верификация через MyID",
-                    "data": {}
-                },
-                status=status.HTTP_200_OK
-            )
-        
-        refresh = RefreshToken.for_user(user)
-        access_token = str(refresh.access_token)
-        refresh_token = str(refresh)
-        
-        user_data = UserSerializer(user).data
-        
         return Response(
             {
                 "success": True,
-                "message": "Успешная авторизация",
-                "data": {
-                    "user": user_data,
-                    "tokens": {
-                        "access": access_token,
-                        "refresh": refresh_token
-                    }
-                }
+                "message": "Код подтвержден"
             },
             status=status.HTTP_200_OK
         )
@@ -727,9 +700,6 @@ class VerifyMyIDDataView(APIView):
         }
     )
     def get(self, request):
-        import logging
-        logger = logging.getLogger(__name__)
-        
         code = request.query_params.get('code')
         access_token = request.query_params.get('token')
         phone_from_request = request.query_params.get('phone_number')
@@ -746,7 +716,6 @@ class VerifyMyIDDataView(APIView):
         try:
             user_data_result = get_user_data(access_token, code)
         except Exception as e:
-            logger.error(f"[VerifyMyIDDataView] Exception in get_user_data: {str(e)}", exc_info=True)
             return Response(
                 {
                     "success": False,
@@ -757,7 +726,6 @@ class VerifyMyIDDataView(APIView):
             )
         
         if not user_data_result:
-            logger.error("[VerifyMyIDDataView] get_user_data returned None - unexpected error")
             return Response(
                 {
                     "success": False,
@@ -767,7 +735,6 @@ class VerifyMyIDDataView(APIView):
             )
         
         if not isinstance(user_data_result, dict):
-            logger.error(f"[VerifyMyIDDataView] user_data_result is not a dict, type: {type(user_data_result)}")
             return Response(
                 {
                     "success": False,
@@ -782,9 +749,6 @@ class VerifyMyIDDataView(APIView):
             error_detail = user_data_result.get("error_detail", {})
             error_code = error_detail.get("err") if isinstance(error_detail, dict) else None
             error_message = error_detail.get("detail") if isinstance(error_detail, dict) else None
-            
-            logger.error(f"[VerifyMyIDDataView] Failed to get user data from MyID: {error}")
-            logger.error(f"[VerifyMyIDDataView] Error detail: {error_detail}")
             
             if error_code == "AUC001" or (error_message and "Code not found" in str(error_message)):
                 user_message = "Код не найден или истек срок действия. Пожалуйста, создайте новую сессию и повторите идентификацию."
@@ -805,7 +769,6 @@ class VerifyMyIDDataView(APIView):
         myid_data = user_data_result.get("data")
         
         if myid_data is None:
-            logger.error("[VerifyMyIDDataView] myid_data is None")
             return Response(
                 {
                     "success": False,
@@ -816,7 +779,6 @@ class VerifyMyIDDataView(APIView):
             )
         
         if not isinstance(myid_data, dict):
-            logger.error(f"[VerifyMyIDDataView] myid_data is not a dict, type: {type(myid_data)}")
             return Response(
                 {
                     "success": False,
@@ -826,7 +788,6 @@ class VerifyMyIDDataView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-        # Safe extraction with None checks
         data_inner = myid_data.get("data")
         
         if data_inner is None:
@@ -841,7 +802,6 @@ class VerifyMyIDDataView(APIView):
         elif not isinstance(profile, dict):
             profile = {}
         
-        # Safe extraction with None checks
         common_data = profile.get("common_data") if isinstance(profile, dict) else None
         if common_data is None or not isinstance(common_data, dict):
             common_data = {}
@@ -876,7 +836,6 @@ class VerifyMyIDDataView(APIView):
             country = permanent_registration.get("country", "") if isinstance(permanent_registration, dict) else ""
             district = permanent_registration.get("district", "") if isinstance(permanent_registration, dict) else ""
         except Exception as e:
-            logger.error(f"[VerifyMyIDDataView] Error extracting user data fields: {str(e)}", exc_info=True)
             return Response(
                 {
                     "success": False,
@@ -924,7 +883,6 @@ class VerifyMyIDDataView(APIView):
             if not city and district:
                 city = district
         
-        # Phone number ni formatlash: barcha bo'sh joylar va belgilarni olib tashlash
         if phone:
             phone = re.sub(r'[\s\-\+]', '', phone)
         
@@ -940,16 +898,12 @@ class VerifyMyIDDataView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Phone number ni +998XXXXXXXXX formatiga o'tkazish
-        # Avval barcha bo'sh joylarni olib tashlash, lekin + belgisini saqlash
         if phone:
-            # + belgisini saqlab, barcha bo'sh joylar va boshqa belgilarni olib tashlash
             has_plus = phone.startswith('+')
             phone_cleaned = re.sub(r'[\s\-]', '', phone)
             if not has_plus and phone_cleaned.startswith('+'):
                 has_plus = True
             
-            # Agar + belgisi bo'lmasa, qo'shish
             if not phone_cleaned.startswith('+'):
                 if phone_cleaned.startswith('998'):
                     phone = '+' + phone_cleaned
@@ -962,12 +916,10 @@ class VerifyMyIDDataView(APIView):
             else:
                 phone = phone_cleaned
         
-        # User ni qidirish - BIRINCHI phone_number bilan, keyin PINFL bilan
         user = None
         user_exists_by_pinfl = False
         user_found_by_phone = False
         
-        # 1. BIRINCHI phone_number bilan qidirish
         if phone:
             try:
                 user = CustomUser.objects.get(phone_number=phone)
@@ -975,47 +927,35 @@ class VerifyMyIDDataView(APIView):
             except CustomUser.DoesNotExist:
                 pass
         
-        # 2. Agar phone_number bilan user topilgan bo'lsa, PINFL bor yo'qligini tekshiramiz
         if user_found_by_phone:
-            # PINFL bor yo'qligini tekshiramiz
             if pinfl:
                 try:
                     user_with_pinfl = CustomUser.objects.get(pnfl=pinfl)
                     
-                    # Agar PINFL bilan topilgan user boshqa user bo'lsa (phone bilan topilgan user emas)
                     if user_with_pinfl.id != user.id:
-                        # Phone bilan topilgan userni o'chirish
                         user.delete()
-                        # PINFL bilan topilgan userni o'zgaruvchiga qo'yish
                         user = user_with_pinfl
                         user_exists_by_pinfl = True
-                        # PINFL bilan topilgan user ning phone_number ni yangilash
                         if user.phone_number != phone:
                             user.phone_number = phone
                             user.save()
                     else:
-                        # Agar bir xil user bo'lsa, PINFL bilan topilgan deb belgilaymiz
                         user_exists_by_pinfl = True
                 except CustomUser.DoesNotExist:
-                    # PINFL bilan user topilmadi, phone bilan topilgan userni ishlatamiz va PINFL ni yangilaymiz
                     pass
         
-        # 3. Agar phone_number bilan user topilmasa va PINFL mavjud bo'lsa, PINFL bilan qidirish
         if not user and pinfl:
             try:
                 user = CustomUser.objects.get(pnfl=pinfl)
                 user_exists_by_pinfl = True
                 
-                # PINFL bilan topilgan user ning phone_number ni yangilash
                 if phone and user.phone_number != phone:
                     user.phone_number = phone
                     user.save()
             except CustomUser.DoesNotExist:
                 pass
         
-        # 4. Agar hali ham user topilmasa, yangi user yaratamiz (error qaytarmaymiz)
         if not user:
-            # Username yaratish
             import uuid
             if phone:
                 username = phone
@@ -1024,7 +964,6 @@ class VerifyMyIDDataView(APIView):
             else:
                 username = f"user_{uuid.uuid4().hex[:8]}"
             
-            # Yangi user yaratish
             try:
                 user = CustomUser.objects.create(
                     phone_number=phone,
@@ -1033,8 +972,6 @@ class VerifyMyIDDataView(APIView):
                     is_active=True
                 )
             except Exception as e:
-                logger.error(f"[VerifyMyIDDataView] Error creating user: {str(e)}", exc_info=True)
-                # Agar yaratishda xatolik bo'lsa, yana bir bor urinib ko'ramiz
                 username = f"{phone}_{uuid.uuid4().hex[:8]}" if phone else f"user_{uuid.uuid4().hex[:8]}"
                 user = CustomUser.objects.create(
                     phone_number=phone,
@@ -1043,14 +980,10 @@ class VerifyMyIDDataView(APIView):
                     is_active=True
                 )
         
-        # NKU (Nomi Kelib Chiqishi) - ism, otasining ismi, familya
-        # Agar ism va familya bo'lsa, ularni to'ldiramiz
         if first_name:
             user.first_name = first_name
         if last_name:
             user.last_name = last_name
-        # Middle name (otasining ismi) - AbstractUser da alohida field yo'q
-        # Middle name ni first_name ichiga qo'shish mumkin, lekin hozircha alohida saqlanmaydi
         if pinfl:
             user.pnfl = pinfl
         if pass_data:
@@ -1061,7 +994,7 @@ class VerifyMyIDDataView(APIView):
                 birth_date = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
                 user.date_of_birth = birth_date
             except Exception as e:
-                logger.warning(f"[VerifyMyIDDataView] - Failed to parse birth_date '{birth_date_str}': {str(e)}")
+                pass
         if address:
             user.address = address
         if country:
@@ -1080,16 +1013,13 @@ class VerifyMyIDDataView(APIView):
         user.is_veriifed_my_id = True
         user.save()
         
-        # Phone number ni +998XXXXXXXXX formatiga o'tkazish (Grist ga yuborish uchun)
         phone_for_grist = phone if phone else phone_from_request
         if phone_for_grist:
-            # + belgisini saqlab, barcha bo'sh joylar va boshqa belgilarni olib tashlash
             has_plus = phone_for_grist.startswith('+')
             phone_cleaned = re.sub(r'[\s\-]', '', phone_for_grist)
             if not has_plus and phone_cleaned.startswith('+'):
                 has_plus = True
             
-            # Agar + belgisi bo'lmasa, qo'shish
             if not phone_cleaned.startswith('+'):
                 if phone_cleaned.startswith('998'):
                     phone_for_grist = '+' + phone_cleaned
@@ -1102,12 +1032,8 @@ class VerifyMyIDDataView(APIView):
             else:
                 phone_for_grist = phone_cleaned
         
-        # Grist ga POST qilish - faqat yangi user uchun (PINFL bilan topilgan user uchun emas)
-        # Agar user PINFL bilan topilgan bo'lsa, bu allaqachon mavjud user, shuning uchun Grist ga POST qilmaymiz
-        # Shuningdek, ISell_CONTERPARTIES jadvalida PINFL va date_of_birth bilan mavjud bo'lsa ham qo'shmaslik kerak
         should_post_to_grist = False
         if not user_exists_by_pinfl:
-            # ISell_CONTERPARTIES jadvalida PINFL va date_of_birth bilan tekshirish
             counterparty_exists = check_counterparty_exists_in_grist(pinfl, birth_date_str)
             if not counterparty_exists:
                 should_post_to_grist = True
@@ -1124,12 +1050,8 @@ class VerifyMyIDDataView(APIView):
                     phone_number=phone_for_grist or "",
                     passport_series=pass_data or ""
                 )
-                if not grist_result:
-                    logger.warning(f"[VerifyMyIDDataView] Grist post returned None - check API_KEY, DOC_ID, or network")
             except Exception as e:
-                logger.error(f"[VerifyMyIDDataView] Error posting to Grist: {str(e)}", exc_info=True)
-        
-        user_data = UserSerializer(user).data
+                pass
         
         refresh = RefreshToken.for_user(user)
         access_token = str(refresh.access_token)
@@ -1140,7 +1062,6 @@ class VerifyMyIDDataView(APIView):
                 "success": True,
                 "message": "Данные успешно обновлены",
                 "data": {
-                    "user": user_data,
                     "tokens": {
                         "access": access_token,
                         "refresh": refresh_token
@@ -1163,74 +1084,56 @@ def check_counterparty_exists_in_grist(pinfl, date_of_birth_str):
         bool: True если контрагент существует, False если нет
     """
     import os
-    import logging
     from apps.v1.order.integrations.advanced_payment_assessment import get_counterparties_in_grist
     from django.utils import timezone
     import pytz
     from datetime import datetime
     
-    logger = logging.getLogger(__name__)
-    
     if not pinfl or not date_of_birth_str:
         return False
     
     try:
-        # Convert date_of_birth_str to timestamp for comparison
         try:
             parsed_date = datetime.strptime(date_of_birth_str, "%Y-%m-%d").date()
             parsed_datetime = datetime.combine(parsed_date, datetime.min.time())
             parsed_datetime_utc = timezone.make_aware(parsed_datetime, pytz.UTC)
             dob_timestamp = int(parsed_datetime_utc.timestamp())
         except Exception as e:
-            logger.warning(f"[check_counterparty_exists_in_grist] Failed to parse date_of_birth '{date_of_birth_str}': {str(e)}")
             return False
         
-        # Get all counterparties from Grist
         counterparties_data = get_counterparties_in_grist()
         counterparties = counterparties_data.get('records', [])
         
-        # Check if any counterparty matches PINFL and date_of_birth
         for counterparty in counterparties:
             fields = counterparty.get('fields', {})
             counterparty_pinfl = fields.get('pinfl', '')
             counterparty_dob = fields.get('date_of_birth')
             
-            # Check PINFL match
             if counterparty_pinfl != pinfl:
                 continue
             
-            # Check date_of_birth match
-            # Handle different types: None, int, string, or datetime
             dob_match = False
             if counterparty_dob is None:
                 dob_match = False
             elif isinstance(counterparty_dob, str):
                 try:
-                    # Try to parse as date string
                     parsed_counterparty_dob = datetime.strptime(counterparty_dob, "%Y-%m-%d").date()
                     parsed_counterparty_datetime = datetime.combine(parsed_counterparty_dob, datetime.min.time())
                     parsed_counterparty_datetime_utc = timezone.make_aware(parsed_counterparty_datetime, pytz.UTC)
                     counterparty_dob_timestamp = int(parsed_counterparty_datetime_utc.timestamp())
                 except ValueError:
-                    # If parsing fails, try to convert directly to int
                     try:
                         counterparty_dob_timestamp = int(float(counterparty_dob))
                     except (ValueError, TypeError):
                         dob_match = False
                         continue
                 else:
-                    # Compare timestamps (allow small difference due to timezone/rounding)
-                    # Grist might store timestamps with slight differences, so we check if they're within 12 hours
                     time_diff = abs(counterparty_dob_timestamp - dob_timestamp)
-                    # Allow up to 12 hours difference (43200 seconds) for timezone issues
                     dob_match = time_diff < 43200
             else:
-                # Convert to int if it's a float or already int
                 try:
                     counterparty_dob_timestamp = int(counterparty_dob)
-                    # Compare timestamps (allow small difference due to timezone/rounding)
                     time_diff = abs(counterparty_dob_timestamp - dob_timestamp)
-                    # Allow up to 12 hours difference (43200 seconds) for timezone issues
                     dob_match = time_diff < 43200
                 except (ValueError, TypeError):
                     dob_match = False
@@ -1241,8 +1144,6 @@ def check_counterparty_exists_in_grist(pinfl, date_of_birth_str):
         return False
         
     except Exception as e:
-        logger.error(f"[check_counterparty_exists_in_grist] Error checking counterparty existence: {str(e)}", exc_info=True)
-        # On error, return False to allow posting (fail-safe)
         return False
 
 
@@ -1266,16 +1167,12 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
     """
     import os
     import requests
-    import logging
-    
-    logger = logging.getLogger(__name__)
     
     API_KEY = os.getenv('ISell_API_KEY')
     DOC_ID = os.getenv('ISell_DOC_ID')
     COUNTERPARTIES_TABLE = os.getenv('ISell_CONTERPARTIES', 'Counterparties')
     
     if not API_KEY or not DOC_ID:
-        logger.warning(f"[post_to_grist_counterparties] Missing API_KEY or DOC_ID. API_KEY={bool(API_KEY)}, DOC_ID={bool(DOC_ID)}")
         return None
     
     url = f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{COUNTERPARTIES_TABLE}/records"
@@ -1288,16 +1185,13 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
     
     full_name = f"{first_name} {middle_name} {last_name}".strip() if middle_name else f"{first_name} {last_name}".strip()
     
-    # Phone number ni +998XXXXXXXXX formatiga o'tkazish (bo'sh joylar bo'lmasligi kerak)
     formatted_phone = phone_number or ""
     if formatted_phone:
-        # + belgisini saqlab, barcha bo'sh joylar va boshqa belgilarni olib tashlash
         has_plus = formatted_phone.startswith('+')
         phone_cleaned = re.sub(r'[\s\-]', '', formatted_phone)
         if not has_plus and phone_cleaned.startswith('+'):
             has_plus = True
         
-        # Agar + belgisi bo'lmasa, qo'shish
         if not phone_cleaned.startswith('+'):
             if phone_cleaned.startswith('998'):
                 formatted_phone = '+' + phone_cleaned
@@ -1337,7 +1231,6 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
         response.raise_for_status()
         
         result = response.json()
-        logger.info(f"[post_to_grist_counterparties] Successfully posted to Grist: {result}")
         return result
     except requests.exceptions.HTTPError as e:
         error_detail = None
@@ -1345,13 +1238,10 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
             error_detail = response.json()
         except:
             error_detail = response.text
-        logger.error(f"[post_to_grist_counterparties] HTTP Error: {e}, Status: {response.status_code}, Detail: {error_detail}")
         return None
     except requests.exceptions.RequestException as e:
-        logger.error(f"[post_to_grist_counterparties] Request Exception: {str(e)}")
         return None
     except Exception as e:
-        logger.error(f"[post_to_grist_counterparties] Unexpected error: {str(e)}", exc_info=True)
         return None
 
 

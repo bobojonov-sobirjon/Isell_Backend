@@ -165,16 +165,13 @@ class ProductListSerializer(serializers.Serializer):
     filter_options = serializers.SerializerMethodField()
     
     def get_id(self, obj):
-        # Return product ID, not ProductDetails ID
         return obj.id
     
     def get_used(self, obj):
-        # Tekshiramiz product name da B/U bor yoki yo'qligini (faqat lotin harflar)
         product_name = (obj.name or "").upper()
         if 'B/U' in product_name or 'B-U' in product_name or 'USED' in product_name:
             return 1
         
-        # Tekshiramiz variation_name da B/U bor yoki yo'qligini (faqat lotin harflar)
         product_id = ProductIDs.objects.filter(product=obj).first()
         if product_id and product_id.variation_name:
             variation_upper = (product_id.variation_name or "").upper()
@@ -188,20 +185,15 @@ class ProductListSerializer(serializers.Serializer):
         product_id = ProductIDs.objects.filter(product=obj).first()
         is_used = self.get_used(obj) == 1
         
-        # Product name dan "B/U", "B-U", "USED", "NEW" va shunga o'xshash so'zlarni olib tashlaymiz (faqat lotin)
         import re
-        # Barcha variantlarni olib tashlaymiz (faqat lotin harflar)
         cleaned_name = re.sub(r'\s*(B/U|B-U|USED|NEW)\s*', '', product_name, flags=re.IGNORECASE).strip()
         
-        # Agar tozalangan name bo'sh bo'lsa, original name ni ishlatamiz
         if not cleaned_name:
             cleaned_name = product_name
         
-        # Used text qo'shamiz
         used_text = "Б/У" if is_used else "Новый"
         display = f"{cleaned_name} {used_text}"
         
-        # Agar B/U tovar bo'lsa va variation_name bo'lsa, uni qo'shamiz
         if product_id and product_id.variation_name and is_used:
             display += f", {product_id.variation_name}"
         
@@ -360,7 +352,6 @@ class ProductListSerializer(serializers.Serializer):
         return sim_card_list
     
     def get_variations(self, obj):
-        # Variatsiyali tovarlar uchun: faqat is_actual=True bo'lgan ProductIDs ga mos keladigan ProductDetails chiqadi
         product_ids = ProductIDs.objects.filter(product=obj)
         has_variations = product_ids.exists() and any(
             pid.variation_name and pid.variation_name.strip() 
@@ -368,27 +359,20 @@ class ProductListSerializer(serializers.Serializer):
         )
         
         if has_variations:
-            # Variatsiyali tovarlar: faqat is_actual=True bo'lgan ProductIDs larni olamiz
             actual_product_ids = list(product_ids.filter(is_actual=True))
             
             if not actual_product_ids:
-                # Agar actual=True bo'lgan ProductIDs yo'q bo'lsa, hech narsa chiqmasin
                 return []
             
-            # Barcha ProductDetails larni olamiz
             all_details = list(obj.details.all().prefetch_related('images'))
             
-            # ProductDetails larni filtrlash - faqat actual=True bo'lgan variatsiyalarga mos keladiganlar
             matched_details = []
             for product_id in actual_product_ids:
-                # Har bir ProductID uchun mos ProductDetails ni topamiz
                 matching_detail = self._find_detail_for_product_id(product_id, all_details)
                 if matching_detail:
-                    # Duplicate larni oldini olish
                     if not any(d.id == matching_detail.id for d in matched_details):
                         matched_details.append(matching_detail)
             
-            # Agar filter parametrlar bo'lsa, ularni qo'llaymiz
             filters = self._get_filter_params()
             if filters['color_name'] or filters['storage_name'] or filters['sim_card_name']:
                 filtered_details = []
@@ -404,7 +388,6 @@ class ProductListSerializer(serializers.Serializer):
             
             details = matched_details
         else:
-            # Variatsiyasiz tovarlar uchun: Products.is_actual=True bo'lsa, barcha ProductDetails ni qaytaramiz
             if not obj.is_actual:
                 return []
             
@@ -462,7 +445,6 @@ class ProductListSerializer(serializers.Serializer):
             if color_match and storage_match and (sim_match if sim else True):
                 return product_id
         
-        # Agar mos keladigan ProductIDs topilmasa, None qaytaradi
         return None
     
     def _find_detail_for_product_id(self, product_id, details_list):
@@ -476,7 +458,6 @@ class ProductListSerializer(serializers.Serializer):
         variation_name = product_id.variation_name.upper().strip()
         variation_words = set(word.strip() for word in variation_name.split() if word.strip())
         
-        # Barcha ProductDetails larni tekshiramiz
         best_match = None
         best_score = 0
         
@@ -487,49 +468,38 @@ class ProductListSerializer(serializers.Serializer):
             
             score = 0
             
-            # Color match - variation_name ichida color bor yoki color ichida variation_name dan qism bor
             color_match = False
             if color:
                 color_words = set(word.strip() for word in color.split() if word.strip())
-                # "Lilac" ni "Awesome Lilac 128GB New" ichida topish
                 if color in variation_name:
                     color_match = True
                     score += 3
-                # "Awesome Lilac" ni "Lilac" ichida topish (reverse) - har bir so'zni tekshirish
                 elif color_words and any(cw in variation_name for cw in color_words if len(cw) > 2):
                     color_match = True
                     score += 2
-                # Variation name so'zlari color ichida bor
                 elif variation_words and any(vw in color for vw in variation_words if len(vw) > 2 and vw not in ['NEW', 'GB', 'SIM']):
                     color_match = True
                     score += 2
             
-            # Storage match - agar storage bo'sh bo'lsa, match=True (storage optional)
-            storage_match = True  # Default to True if no storage
+            storage_match = True
             if storage:
-                # "128GB" ni "128GB" yoki "128 GB" formatida tekshirish
                 if storage in variation_name:
                     storage_match = True
                     score += 2
-                # "128GB" ni "128 GB" formatida ham tekshirish
                 elif storage.replace(" ", "") in variation_name.replace(" ", ""):
                     storage_match = True
                     score += 2
-                # Storage so'zlari variation_name ichida bor
                 elif any(sw in variation_name for sw in storage.split() if sw and len(sw) > 1):
                     storage_match = True
                     score += 2
                 else:
-                    # Agar storage bor lekin variation_name da topilmasa, storage_match=False
                     storage_match = False
             
-            # SIM match (more flexible) - SIM optional, agar variation_name da SIM yo'q bo'lsa, match=True
-            sim_match = True  # Default to True
+            sim_match = True
             if sim:
                 sim_normalized = sim.replace("+", "").replace(" ", "").upper()
                 variation_normalized = variation_name.replace(" ", "").replace("+", "").upper()
                 
-                # Agar variation_name da SIM bor bo'lsa, tekshiramiz
                 has_sim_in_variation = (
                     "SIM" in variation_name or 
                     "DUAL" in variation_name or 
@@ -537,7 +507,6 @@ class ProductListSerializer(serializers.Serializer):
                 )
                 
                 if has_sim_in_variation:
-                    # Agar variation_name da SIM bor bo'lsa, match qilish kerak
                     if sim in variation_name:
                         sim_match = True
                         score += 1
@@ -554,10 +523,8 @@ class ProductListSerializer(serializers.Serializer):
                         sim_match = True
                         score += 1
                     else:
-                        # Agar variation_name da SIM bor lekin match topilmasa, sim_match=False
                         sim_match = False
             
-            # Match if color and storage match (sim is optional)
             if color_match and storage_match and sim_match:
                 if score > best_score:
                     best_score = score

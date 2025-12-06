@@ -42,7 +42,6 @@ class ProductDetailsInline(admin.TabularInline):
     
     def get_formset(self, request, obj=None, **kwargs):
         formset = super().get_formset(request, obj, **kwargs)
-        # Store request for use in images method
         self.request = request
         return formset
     
@@ -50,7 +49,6 @@ class ProductDetailsInline(admin.TabularInline):
         first_image = obj.images.first()
         if first_image and first_image.image:
             image_url = first_image.image.url
-            # Build absolute URL with base URL
             if not image_url.startswith('http'):
                 request = getattr(self, 'request', None)
                 if request:
@@ -89,7 +87,6 @@ class ProductsAdmin(admin.ModelAdmin):
         """Display first image of the product"""
         if obj.image:
             return format_html('<img src="{}" style="max-height: 50px; max-width: 50px;" />', obj.image.url)
-        # Try to get image from product details
         first_detail = obj.details.first()
         if first_detail:
             first_image = first_detail.images.first()

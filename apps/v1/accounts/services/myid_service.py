@@ -30,7 +30,7 @@ def get_access_token():
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         logger.info(f"Response status: {response.status_code}")
         
-        response.raise_for_status()  # Raises an HTTPError for bad responses
+        response.raise_for_status()
         
         response_data = response.json()
         logger.info("Access token received successfully")
@@ -95,7 +95,6 @@ def create_session(access_token, phone_number=None, birth_date=None, is_resident
     
     payload = {}
     
-    # Добавляем только переданные параметры
     if phone_number is not None:
         payload["phone_number"] = phone_number
     if birth_date is not None:
@@ -210,7 +209,6 @@ def get_user_data(access_token, code):
             "status_code": None
         }
     except:
-        # Final catch-all to ensure we never return None
         logger.error(f"[get_user_data] Critical error - unknown exception", exc_info=True)
         return {
             "success": False,

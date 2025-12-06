@@ -5,7 +5,6 @@ from pathlib import Path
 
 from apps.v1.order.models import Tariffs
 
-# Django settings dan BASE_DIR ni olish
 try:
     from django.conf import settings
     BASE_DIR = settings.BASE_DIR
@@ -68,7 +67,6 @@ def get_tariffs():
             grist_id = str(record.get('id'))
             fields = record.get('fields', {})
             
-            # Ma'lumotlarni olish
             name = fields.get('name', '')
             payments_count = fields.get('payments_count', 0)
             offset = fields.get('offset', 0)
@@ -78,7 +76,6 @@ def get_tariffs():
             
             print(f"[ORDER_LIST] Processing tariff: {name} (ID: {grist_id})")
             
-            # Tariff yaratish yoki yangilash
             tariff, created = Tariffs.objects.update_or_create(
                 grist_tariff_id=grist_id,
                 defaults={

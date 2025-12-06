@@ -129,13 +129,11 @@ class OrdersAdmin(admin.ModelAdmin):
         
         html = '<div style="margin: 20px 0;">'
         
-        # Show products info
         html += '<div style="margin-bottom: 20px;">'
         for item in order_items:
             html += f'<p><strong>Товар:</strong> {item.product.name} | <strong>Тариф:</strong> {item.tariff.name} | <strong>Количество:</strong> {item.quantity} | <strong>Цена:</strong> {item.price} | <strong>Первоначальный взнос:</strong> {item.down_payment}</p>'
         html += '</div>'
         
-        # Merge payment schedules
         merged_payments = {}
         
         for item in order_items:
@@ -175,11 +173,9 @@ class OrdersAdmin(admin.ModelAdmin):
                 payment_info = merged_payments[month_num]
                 schedules = payment_info['schedules']
                 
-                # Check if all schedules for this month are paid
                 all_paid = all(s.is_paid for s in schedules)
                 is_paid_icon = '✅' if all_paid else '❌'
                 
-                # Get paid date (if all paid, show the latest paid date)
                 paid_dates = [s.paid_at for s in schedules if s.paid_at]
                 paid_date = max(paid_dates).strftime('%d.%m.%Y %H:%M') if paid_dates else '-'
                 

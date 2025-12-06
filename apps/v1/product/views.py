@@ -139,7 +139,6 @@ class ProductListView(APIView):
         name = request.query_params.get('name', None)
         category = request.query_params.get('category', None)
         
-        # Barcha productlarni olamiz
         queryset = Products.objects.select_related(
             'category'
         ).prefetch_related(
@@ -148,12 +147,9 @@ class ProductListView(APIView):
             'characteristics__property'
         ).filter(actual=True)
         
-        # Variatsiyasiz tovarlar uchun: Products.is_actual = True bo'lishi kerak
-        # Variatsiyali tovarlar uchun: kamida bitta ProductIDs.is_actual = True bo'lishi kerak
         
         from django.db.models import Q, Exists, OuterRef
         
-        # Variatsiyasiz tovarlar: is_actual=True va variatsiya yo'q
         products_without_variations = queryset.filter(
             is_actual=True
         ).annotate(
@@ -162,12 +158,10 @@ class ProductListView(APIView):
             )
         ).filter(has_variations=False)
         
-        # Variatsiyali tovarlar: kamida bitta ProductIDs.is_actual = True
         products_with_variations = queryset.filter(
             ids__is_actual=True
         ).distinct()
         
-        # Ikkala querysetni birlashtiramiz
         queryset = queryset.filter(
             Q(id__in=products_without_variations.values_list('id', flat=True)) |
             Q(id__in=products_with_variations.values_list('id', flat=True))
@@ -370,12 +364,10 @@ class CalculateMonthlyPaymentView(APIView):
         )
         tariff = get_object_or_404(Tariffs, id=installment_period)
         
-        # Check if tariff is "No installment"
         is_no_installment = tariff.name and "No installment" in tariff.name
         
         product_price = None
         
-        # Если передан variation_id, ищем цену в ProductDetails
         if variation_id:
             product_id_obj = ProductIDs.objects.filter(
                 product=product,
@@ -413,12 +405,10 @@ class CalculateMonthlyPaymentView(APIView):
                             product_price = float(detail.price)
                             break
         
-        # Если variation_id не передан или не найден, берем цену из Product.price
         if product_price is None:
             if product.price is not None:
                 product_price = float(product.price)
             else:
-                # Если в Product.price тоже нет, берем минимальную цену из details
                 details = product.details.all()
                 if details.exists():
                     prices = [float(detail.price) for detail in details if detail.price is not None]
@@ -431,7 +421,6 @@ class CalculateMonthlyPaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # If tariff is "No installment", monthly_payment should be 0
         if is_no_installment:
             monthly_payment = 0
         else:
@@ -468,17 +457,11 @@ def get_user_counterparty_id(user):
         counterparties_data = get_counterparties_in_grist()
         counterparties = counterparties_data.get('records', [])
 
-        # Convert user's date_of_birth to timestamp
-        # date objects don't have timestamp(), so convert to datetime first
-        # Grist stores timestamps in UTC, so we need to create UTC datetime
         if user.date_of_birth:
-            # Create datetime at midnight UTC for the date
-            # Use timezone-aware datetime to ensure UTC
             from django.utils import timezone
             import pytz
             
             user_dob_datetime = datetime.combine(user.date_of_birth, datetime.min.time())
-            # Make it timezone-aware (UTC)
             user_dob_datetime_utc = timezone.make_aware(user_dob_datetime, pytz.UTC)
             user_dob_timestamp = int(user_dob_datetime_utc.timestamp())
         else:
@@ -490,24 +473,18 @@ def get_user_counterparty_id(user):
             date_of_birth = fields.get('date_of_birth')
             counterparty_id = counterparty.get('id')
 
-            # Check pnfl match
             pinfl_match = pinfl == user.pnfl
 
-            # Check date_of_birth match
-            # Handle different types: None, int, string, or datetime
             dob_match = False
             if date_of_birth is None and user_dob_timestamp is None:
                 dob_match = True
 
             elif date_of_birth is not None and user_dob_timestamp is not None:
                 try:
-                    # If date_of_birth is a string (like "2000-05-18"), parse it
                     if isinstance(date_of_birth, str):
-                        # Try to parse as date string
                         try:
                             from datetime import datetime as dt
                             parsed_date = dt.strptime(date_of_birth, "%Y-%m-%d").date()
-                            # Convert to UTC timestamp
                             from django.utils import timezone
                             import pytz
                             
@@ -516,17 +493,12 @@ def get_user_counterparty_id(user):
                             grist_dob = int(parsed_datetime_utc.timestamp())
 
                         except ValueError:
-                            # If parsing fails, try to convert directly to int
                             grist_dob = int(float(date_of_birth))
 
                     else:
-                        # Convert to int if it's a float or already int
                         grist_dob = int(date_of_birth)
                     
-                    # Compare timestamps (allow small difference due to timezone/rounding)
-                    # Grist might store timestamps with slight differences, so we check if they're within 24 hours
                     time_diff = abs(grist_dob - user_dob_timestamp)
-                    # Allow up to 12 hours difference (43200 seconds) for timezone issues
                     dob_match = time_diff < 43200
 
                 except (ValueError, TypeError) as e:
@@ -539,7 +511,6 @@ def get_user_counterparty_id(user):
 
         return None
     except Exception as e:
-        logger.error(f"Error getting user counterparty ID: {str(e)}", exc_info=True)
         return None
 
 def check_user_has_application(user, applications):
@@ -559,7 +530,6 @@ def check_user_has_application(user, applications):
 
             return (False, None)
 
-        # Check if user has any application (any stage)
         for idx, app in enumerate(applications):
             app_counterparty_id = app.get('fields', {}).get('counterparty_id')
             app_stage = app.get('fields', {}).get('stage', '')
@@ -591,7 +561,6 @@ def get_latest_application_by_counterparty(applications, counterparty_id):
     if not matching_apps:
         return None
     
-    # Sort by id (highest = latest) and return the first one
     matching_apps.sort(key=lambda x: x.get('id', 0), reverse=True)
     return matching_apps[0]
 
@@ -610,15 +579,13 @@ def are_all_today_applications_accepted(applications, counterparty_id):
     from django.utils import timezone
     import pytz
     
-    # Get today's date at midnight UTC
     today = datetime.now().date()
     today_datetime = datetime.combine(today, datetime.min.time())
     today_datetime_utc = timezone.make_aware(today_datetime, pytz.UTC)
     today_timestamp = int(today_datetime_utc.timestamp())
     
-    # Also check for date range (start and end of day)
     today_start = today_timestamp
-    today_end = today_timestamp + 86400  # 24 hours in seconds
+    today_end = today_timestamp + 86400
     
     today_apps = []
     for app in applications:
@@ -626,7 +593,6 @@ def are_all_today_applications_accepted(applications, counterparty_id):
         app_date = app.get('fields', {}).get('date')
         
         if app_counterparty_id == counterparty_id and app_date:
-            # Handle different date formats from Grist
             app_date_timestamp = None
             if isinstance(app_date, (int, float)):
                 app_date_timestamp = int(app_date)
@@ -640,14 +606,12 @@ def are_all_today_applications_accepted(applications, counterparty_id):
                 except:
                     pass
             
-            # Check if date matches today (within the day range)
             if app_date_timestamp and today_start <= app_date_timestamp < today_end:
                 today_apps.append(app)
     
     if not today_apps:
         return False
     
-    # Check if all today's applications are "Accepted" or "Success"
     for app in today_apps:
         stage = app.get('fields', {}).get('stage', '')
         if stage not in ['Accepted', 'Success']:
@@ -667,15 +631,13 @@ def get_today_application_by_counterparty(applications, counterparty_id):
     from django.utils import timezone
     import pytz
     
-    # Get today's date at midnight UTC
     today = datetime.now().date()
     today_datetime = datetime.combine(today, datetime.min.time())
     today_datetime_utc = timezone.make_aware(today_datetime, pytz.UTC)
     today_timestamp = int(today_datetime_utc.timestamp())
     
-    # Also check for date range (start and end of day)
     today_start = today_timestamp
-    today_end = today_timestamp + 86400  # 24 hours in seconds
+    today_end = today_timestamp + 86400
     
     matching_apps = []
     for app in applications:
@@ -683,7 +645,6 @@ def get_today_application_by_counterparty(applications, counterparty_id):
         app_date = app.get('fields', {}).get('date')
         
         if app_counterparty_id == counterparty_id and app_date:
-            # Handle different date formats from Grist
             app_date_timestamp = None
             if isinstance(app_date, (int, float)):
                 app_date_timestamp = int(app_date)
@@ -697,14 +658,12 @@ def get_today_application_by_counterparty(applications, counterparty_id):
                 except:
                     pass
             
-            # Check if date matches today (within the day range)
             if app_date_timestamp and today_start <= app_date_timestamp < today_end:
                 matching_apps.append(app)
     
     if not matching_apps:
         return None
     
-    # Sort by id (highest = latest) and return the first one
     matching_apps.sort(key=lambda x: x.get('id', 0), reverse=True)
     return matching_apps[0]
 
@@ -723,14 +682,12 @@ def get_grist_product_ids_from_request(product_list):
             continue
         
         try:
-            # Filter ProductIDs by product_id and variation_id
             if variation_id:
                 product_id_obj = ProductIDs.objects.filter(
                     product_id=product_id,
                     variation_id=str(variation_id)
                 ).first()
             else:
-                # If no variation_id, get first ProductIDs for this product
                 product_id_obj = ProductIDs.objects.filter(
                     product_id=product_id
                 ).first()
@@ -761,33 +718,23 @@ def compare_application_products_with_request(application, product_list):
         return False
     
     try:
-        # Get products from application (these are Price table product_ids)
         app_products = application.get('fields', {}).get('products', [])
         
-        # Handle Grist reference list format: ["L", id1, id2, ...]
         if isinstance(app_products, list) and len(app_products) > 0 and app_products[0] == "L":
             app_products = app_products[1:] if len(app_products) > 1 else []
         
-        # Convert to set for comparison (normalize to strings)
         app_products_set = set(str(p) for p in app_products if p)
         
-        # Get grist_product_ids from request
         grist_product_ids = get_grist_product_ids_from_request(product_list)
         
-        # Convert grist_product_ids to product_ids from Price table
         from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
         request_product_ids = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
         
-        # Convert to set for comparison (normalize to strings)
         request_products_set = set(str(p) for p in request_product_ids if p)
         
-        # Compare sets
         return app_products_set == request_products_set
         
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Error comparing application products with request: {str(e)}", exc_info=True)
         return False
 
 def get_risk_category_id_from_applications(applications, counterparty_id):
@@ -808,7 +755,6 @@ def get_risk_category_id_from_applications(applications, counterparty_id):
     if not applications or not counterparty_id:
         return None
     
-    # Priority 1: Try to get from latest application with "Accepted" or "Success" status
     latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
     if latest_app:
         latest_stage = latest_app.get('fields', {}).get('stage', '')
@@ -817,7 +763,6 @@ def get_risk_category_id_from_applications(applications, counterparty_id):
             if risk_category_id:
                 return risk_category_id
     
-    # Priority 2: Search in all applications with "Accepted" or "Success" status (sorted by id desc)
     approved_apps = []
     for app in applications:
         app_counterparty_id = app.get('fields', {}).get('counterparty_id')
@@ -825,7 +770,6 @@ def get_risk_category_id_from_applications(applications, counterparty_id):
         if app_counterparty_id == counterparty_id and app_stage in ['Accepted', 'Success']:
             approved_apps.append(app)
     
-    # Sort by id (highest = latest) and get first one with risk_category_id
     if approved_apps:
         approved_apps.sort(key=lambda x: x.get('id', 0), reverse=True)
         for app in approved_apps:
@@ -833,20 +777,17 @@ def get_risk_category_id_from_applications(applications, counterparty_id):
             if risk_category_id:
                 return risk_category_id
     
-    # Priority 3: Try to get from latest application (any status)
     if latest_app:
         risk_category_id = latest_app.get('fields', {}).get('risk_category_id')
         if risk_category_id:
             return risk_category_id
     
-    # Priority 4: Search in all applications for this counterparty (sorted by id desc)
     all_apps = []
     for app in applications:
         app_counterparty_id = app.get('fields', {}).get('counterparty_id')
         if app_counterparty_id == counterparty_id:
             all_apps.append(app)
     
-    # Sort by id (highest = latest) and get first one with risk_category_id
     if all_apps:
         all_apps.sort(key=lambda x: x.get('id', 0), reverse=True)
         for app in all_apps:
@@ -866,7 +807,6 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
         return 0
     
     try:
-        # Filter applications by counterparty_id and check for Accepted stage
 
         approved_applications = []
         for idx, app in enumerate(applications):
@@ -874,7 +814,6 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
             app_stage = app.get('fields', {}).get('stage', '')
             app_id = app.get('id')
 
-            # Only accept "Accepted" stage
             if app_counterparty_id == counterparty_id and app_stage == 'Accepted':
 
                 approved_applications.append(app)
@@ -883,8 +822,6 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
 
             return 0
         
-        # Get risk_category_id from approved applications
-        # If application is found, use its risk_category_id even if products don't match
 
         risk_category_id = None
         for app_idx, app in enumerate(approved_applications):
@@ -892,7 +829,6 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
             app_risk_category_id = app.get('fields', {}).get('risk_category_id')
             app_id = app.get('id')
 
-            # First, try to find matching product in app_products
             product_found = False
             for prod_idx, prod_data in enumerate(products_data):
                 product = prod_data['product']
@@ -915,7 +851,6 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
                 else:
                     pass
             
-            # If no product match found but application exists, use its risk_category_id anyway
             if not product_found and app_risk_category_id:
                 risk_category_id = app_risk_category_id
 
@@ -928,7 +863,6 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
 
             return 0
 
-        # Calculate minimum_contribution for all products
         minimum_contribution = 0
 
         for prod_idx, prod_data in enumerate(products_data):
@@ -950,9 +884,7 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
                     
                     if risk_category_id and price_category_id:
                         try:
-                            # Try to find ProductRiskCategory
 
-                            # Check what exists in database
                             all_risk_categories = ProductRiskCategory.objects.filter(
                                 grist_risk_category_id=str(risk_category_id)
                             )
@@ -1091,7 +1023,6 @@ class CalculatePaymentScheduleView(APIView):
         calculation_mode = request.data.get('calculation_mode')
         product_list = request.data.get('product_list', [])
         
-        # Get user from request
         user = request.user if hasattr(request, 'user') and request.user.is_authenticated else None
         
         if calculation_mode is None:
@@ -1113,7 +1044,7 @@ class CalculatePaymentScheduleView(APIView):
             )
         
         monthly_payments = []
-        has_application = False  # Initialize for both modes
+        has_application = False
         
         if calculation_mode == 1:
             total_down_payment = request.data.get('total_advance_payment')
@@ -1140,29 +1071,24 @@ class CalculatePaymentScheduleView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
-            # Check if tariff is "No installment"
             is_no_installment = tariff.name and "No installment" in tariff.name
             
             total_product_sum = 0
             products_data = []
             
-            # OPTIMIZATION: Barcha productlarni bir marta olish (bulk fetch)
             product_ids = [item.get('product_id') for item in product_list]
             products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
             products_dict = {p.id: p for p in products}
             
-            # OPTIMIZATION: Barcha ProductIDs ni bir marta olish
             product_ids_objs = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
-            product_ids_dict = {}  # product_id -> [ProductIDs objects]
-            variation_dict = {}    # (product_id, variation_id) -> ProductIDs object
+            product_ids_dict = {}
+            variation_dict = {}
             
             for pid_obj in product_ids_objs:
-                # Asosiy mapping
                 if pid_obj.product_id not in product_ids_dict:
                     product_ids_dict[pid_obj.product_id] = []
                 product_ids_dict[pid_obj.product_id].append(pid_obj)
                 
-                # Variation mapping
                 key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
                 variation_dict[key] = pid_obj
             
@@ -1178,7 +1104,6 @@ class CalculatePaymentScheduleView(APIView):
                 product_price = None
                 
                 if variation_id:
-                    # OPTIMIZATION: Dictionary dan olish
                     key = (product_id, str(variation_id))
                     product_id_obj = variation_dict.get(key)
                     if product_id_obj and product_id_obj.variation_name:
@@ -1227,7 +1152,6 @@ class CalculatePaymentScheduleView(APIView):
                 
                 total_product_sum += product_price * quantity
                 
-                # OPTIMIZATION: Dictionary dan olish
                 product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
                 response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
                 
@@ -1251,17 +1175,11 @@ class CalculatePaymentScheduleView(APIView):
             minimum_contribution = 0
             application_status = None
             counterparty_id_for_response = None
-            import logging
-            logger = logging.getLogger(__name__)
             
-            logger.info(f"[CalculatePaymentScheduleView Mode 1] User: {user}, User ID: {user.id if user else None}")
-            
-            # Early return optimization: Skip application logic if tariff is "No installment"
             if is_no_installment:
-                logger.info(f"[CalculatePaymentScheduleView Mode 1] Tariff is 'No installment', skipping application logic")
+                pass
             elif user:
                 try:
-                    # Use ThreadPoolExecutor for concurrent API calls - optimize by running all 3 in parallel
                     with ThreadPoolExecutor(max_workers=3) as executor:
                         application_future = executor.submit(get_application)
                         grist_products_future = executor.submit(get_products_in_grist)
@@ -1275,12 +1193,7 @@ class CalculatePaymentScheduleView(APIView):
                     grist_products = grist_products_data.get('records', [])
                     counterparty_id_for_response = counterparty_id
                     
-                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Applications count: {len(applications)}, Grist products count: {len(grist_products)}")
-                    
-                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Counterparty ID: {counterparty_id}")
-                    
                     if counterparty_id:
-                        # Build grist_product_map
                         grist_product_map = {}
                         for grist_product in grist_products:
                             grist_id = grist_product.get('id')
@@ -1288,30 +1201,20 @@ class CalculatePaymentScheduleView(APIView):
                             if grist_id and price_category_id:
                                 grist_product_map[grist_id] = price_category_id
                         
-                        # First check for latest application (not just today's)
                         latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
                         
-                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app found: {latest_app is not None}")
-                        
                         if latest_app:
-                            # Use latest application
                             latest_stage = latest_app.get('fields', {}).get('stage', '')
                             application_status = latest_stage
                             
-                            logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app stage: {latest_stage}")
-                            
-                            # Calculate minimum_contribution based on status
                             if latest_stage in ['Accepted', 'Denied']:
-                                # Get risk_category_id from applications
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                 if risk_category_id:
-                                    # OPTIMIZATION: Barcha kerakli price_category_id larni yig'ish
                                     price_category_ids = set()
                                     grist_product_ids_list = []
                                     
                                     for prod_data in products_data:
                                         product = prod_data['product']
-                                        # Dictionary dan olish (yuqorida yaratilgan)
                                         product_id_obj = product_ids_dict.get(product.id, [None])[0] if product_ids_dict.get(product.id) else None
                                         if product_id_obj and product_id_obj.grist_product_id:
                                             try:
@@ -1323,7 +1226,6 @@ class CalculatePaymentScheduleView(APIView):
                                             except (ValueError, TypeError):
                                                 pass
                                     
-                                    # OPTIMIZATION: Barcha ProductRiskCategory ni bir marta olish
                                     risk_category_dict = {}
                                     if price_category_ids:
                                         risk_categories = ProductRiskCategory.objects.filter(
@@ -1335,13 +1237,11 @@ class CalculatePaymentScheduleView(APIView):
                                             for rc in risk_categories
                                         }
                                     
-                                    # OPTIMIZATION: Loop ichida dictionary dan olish
                                     for prod_data in products_data:
                                         product = prod_data['product']
                                         quantity = prod_data['quantity']
                                         product_price = prod_data['price']
                                         
-                                        # Dictionary dan olish
                                         product_id_obj = product_ids_dict.get(product.id, [None])[0] if product_ids_dict.get(product.id) else None
                                         if product_id_obj and product_id_obj.grist_product_id:
                                             try:
@@ -1349,7 +1249,6 @@ class CalculatePaymentScheduleView(APIView):
                                                 if grist_product_id in grist_product_map:
                                                     price_category_id = str(grist_product_map[grist_product_id])
                                                     
-                                                    # Dictionary dan olish
                                                     product_risk_category = risk_category_dict.get(price_category_id)
                                                     if product_risk_category:
                                                         print(f"product_risk_category: {product_risk_category}")
@@ -1364,48 +1263,23 @@ class CalculatePaymentScheduleView(APIView):
                             elif latest_stage == 'Denied by client':
                                 minimum_contribution = 0
                             
-                            logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest stage: {latest_stage}")
-                            
-                            # If "New" or "Assessment", return that status (don't create new application)
                             if latest_stage in ['New', 'Assessment']:
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Status is '{latest_stage}' - NOT creating new application")
-                                # application_status is already set above
-                            
-                            # If "Accepted", check if products match
+                                pass
                             elif latest_stage == 'Accepted':
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Status is 'Accepted' - checking products")
-                                
-                                # Compare products from application with request products
                                 products_match = compare_application_products_with_request(latest_app, product_list)
                                 
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Products match: {products_match}")
-                                
                                 if products_match:
-                                    # Products match - return "Accepted" status
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Products match - NOT creating new application")
-                                    # application_status is already set to 'Accepted' above
+                                    pass
                                 else:
-                                    # Products don't match - create new application
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Products don't match - creating new application")
-                                    
-                                    # Get grist_product_ids from request
                                     grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Grist product IDs: {grist_product_ids}")
                                     
-                                    # Convert grist_product_ids to product_ids from Price table
                                     from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
                                     product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Product IDs for application: {product_ids_for_application}")
                                     
-                                    # Get risk_category_id from applications (try latest first, then search all)
                                     risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Risk category ID: {risk_category_id}")
                                     
-                                    # Create application in grist
                                     try:
                                         current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                        
-                                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Creating application in Grist: counterparty_id={counterparty_id}, date={current_date_str}, stage=New, risk_category_id={risk_category_id}, issue_limit={total_down_payment}, products={product_ids_for_application}")
                                         
                                         result = post_to_grist_application(
                                             counterparty_id=counterparty_id,
@@ -1416,40 +1290,22 @@ class CalculatePaymentScheduleView(APIView):
                                             products=product_ids_for_application
                                         )
                                         
-                                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Grist application result: {result}")
-                                        
                                         if result:
-                                            # IMPORTANT: After creating new application, return "New" status
                                             application_status = 'New'
-                                            minimum_contribution = 0  # Reset for new application
-                                            logger.info(f"[CalculatePaymentScheduleView Mode 1] Application created successfully, status set to: {application_status}")
-                                        else:
-                                            logger.warning(f"[CalculatePaymentScheduleView Mode 1] Application creation returned False/None")
+                                            minimum_contribution = 0
                                     except Exception as e:
-                                        logger.error(f"[CalculatePaymentScheduleView Mode 1] Error creating application: {str(e)}, Type: {type(e).__name__}", exc_info=True)
+                                        pass
                             
-                            # Only create new application if status is "Success"
                             elif latest_stage == 'Success':
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest stage is 'Success' - creating new application")
-                                
-                                # Get grist_product_ids from request
                                 grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Grist product IDs: {grist_product_ids}")
                                 
-                                # Convert grist_product_ids to product_ids from Price table
                                 from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
                                 product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Product IDs for application: {product_ids_for_application}")
                                 
-                                # Get risk_category_id from applications (try latest first, then search all)
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Risk category ID: {risk_category_id}")
                                 
-                                # Create application in grist
                                 try:
                                     current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                    
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Creating application in Grist: counterparty_id={counterparty_id}, date={current_date_str}, stage=New, risk_category_id={risk_category_id}, issue_limit={total_down_payment}, products={product_ids_for_application}")
                                     
                                     result = post_to_grist_application(
                                         counterparty_id=counterparty_id,
@@ -1460,74 +1316,46 @@ class CalculatePaymentScheduleView(APIView):
                                         products=product_ids_for_application
                                     )
                                     
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Grist application result: {result}")
-                                    
                                     if result:
-                                        # IMPORTANT: After creating new application, return "New" status
                                         application_status = 'New'
-                                        minimum_contribution = 0  # Reset for new application
-                                        logger.info(f"[CalculatePaymentScheduleView Mode 1] Latest app - Application created successfully, status set to: {application_status}")
-                                    else:
-                                        logger.warning(f"[CalculatePaymentScheduleView Mode 1] Latest app - Application creation returned False/None")
+                                        minimum_contribution = 0
                                 except Exception as e:
-                                    logger.error(f"[CalculatePaymentScheduleView Mode 1] Latest app - Error creating application: {str(e)}, Type: {type(e).__name__}", exc_info=True)
+                                    pass
                         else:
-                            # No application found at all - create new application
-                            logger.info(f"[CalculatePaymentScheduleView Mode 1] No application found at all - creating new application")
-                            
-                            # Get grist_product_ids from request
                             grist_product_ids = get_grist_product_ids_from_request(product_list)
-                            logger.info(f"[CalculatePaymentScheduleView Mode 1] No app - Grist product IDs: {grist_product_ids}")
                             
-                            # Convert grist_product_ids to product_ids from Price table
                             from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
                             product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                            logger.info(f"[CalculatePaymentScheduleView Mode 1] No app - Product IDs for application: {product_ids_for_application}")
                             
-                            # Try to get risk_category_id from any existing applications
                             risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                            logger.info(f"[CalculatePaymentScheduleView Mode 1] No app - Risk category ID: {risk_category_id}")
                             
-                            # Create application in grist
                             try:
                                 current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] No app - Creating application in Grist: counterparty_id={counterparty_id}, date={current_date_str}, stage=New, risk_category_id={risk_category_id}, issue_limit={total_down_payment}, products={product_ids_for_application}")
                                 
                                 result = post_to_grist_application(
                                     counterparty_id=counterparty_id,
                                     date=current_date_str,
                                     stage='New',
-                                    risk_category_id=risk_category_id,  # May be None if no previous applications
+                                    risk_category_id=risk_category_id,
                                     issue_limit=float(total_down_payment),
                                     products=product_ids_for_application
                                 )
                                 
-                                logger.info(f"[CalculatePaymentScheduleView Mode 1] No app - Grist application result: {result}")
-                                
                                 if result:
-                                    # IMPORTANT: After creating new application, return "New" status
                                     application_status = 'New'
-                                    logger.info(f"[CalculatePaymentScheduleView Mode 1] No app - Application created successfully, status set to: {application_status}")
-                                else:
-                                    logger.warning(f"[CalculatePaymentScheduleView Mode 1] No app - Application creation returned False/None")
                             except Exception as e:
-                                logger.error(f"[CalculatePaymentScheduleView Mode 1] No app - Error creating application: {str(e)}, Type: {type(e).__name__}", exc_info=True)
+                                pass
                             
                             minimum_contribution = 0
                     else:
-                        # No counterparty_id, can't create application
                         application_status = None
                         minimum_contribution = 0
-                        logger.warning(f"[CalculatePaymentScheduleView Mode 1] No counterparty_id found for user")
                 except Exception as e:
-                    logger.error(f"[CalculatePaymentScheduleView Mode 1] Exception: {str(e)}, Type: {type(e).__name__}", exc_info=True)
                     minimum_contribution = 0
                     application_status = None
             
             current_date = datetime.now()
             
-            # If tariff is "No installment", don't generate monthly_payments
             if not is_no_installment and monthly_payment_amount > 0:
                 safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
                 for month_num in range(1, safe_payments_count + 1):
@@ -1563,7 +1391,6 @@ class CalculatePaymentScheduleView(APIView):
             max_months = 0
             total_remaining_after_advance = 0
             
-            # Check if user has application
             has_application = False
             counterparty_id = None
             grist_product_map = {}
@@ -1572,7 +1399,6 @@ class CalculatePaymentScheduleView(APIView):
             
             if user:
                 try:
-                    # Use ThreadPoolExecutor for concurrent API calls - optimize by running all 3 in parallel
                     with ThreadPoolExecutor(max_workers=3) as executor:
                         application_future = executor.submit(get_application)
                         grist_products_future = executor.submit(get_products_in_grist)
@@ -1586,7 +1412,6 @@ class CalculatePaymentScheduleView(APIView):
                     grist_products = grist_products_data.get('records', [])
                     counterparty_id_for_response = counterparty_id
                     
-                    # Build grist_product_map
                     for grist_product in grist_products:
                         grist_id = grist_product.get('id')
                         price_category_id = grist_product.get('fields', {}).get('price_category_id')
@@ -1594,7 +1419,6 @@ class CalculatePaymentScheduleView(APIView):
                             grist_product_map[grist_id] = price_category_id
                     
                     if counterparty_id:
-                        # Get latest application for this counterparty_id
                         latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
                         
                         if latest_app:
@@ -1609,28 +1433,23 @@ class CalculatePaymentScheduleView(APIView):
                 except Exception:
                     pass
             
-            # OPTIMIZATION: Barcha productlarni bir marta olish (bulk fetch)
             product_ids = [item.get('product_id') for item in product_list if item.get('product_id')]
             products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
             products_dict = {p.id: p for p in products}
             
-            # OPTIMIZATION: Barcha tarifflarni bir marta olish
             tariff_ids = [item.get('tariff_id') for item in product_list if item.get('tariff_id')]
             tariffs = Tariffs.objects.filter(id__in=tariff_ids)
             tariffs_dict = {t.id: t for t in tariffs}
             
-            # OPTIMIZATION: Barcha ProductIDs ni bir marta olish
             product_ids_objs_mode2 = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
-            product_ids_dict_mode2 = {}  # product_id -> [ProductIDs objects]
-            variation_dict_mode2 = {}    # (product_id, variation_id) -> ProductIDs object
+            product_ids_dict_mode2 = {}
+            variation_dict_mode2 = {}
             
             for pid_obj in product_ids_objs_mode2:
-                # Asosiy mapping
                 if pid_obj.product_id not in product_ids_dict_mode2:
                     product_ids_dict_mode2[pid_obj.product_id] = []
                 product_ids_dict_mode2[pid_obj.product_id].append(pid_obj)
                 
-                # Variation mapping
                 key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
                 variation_dict_mode2[key] = pid_obj
             
@@ -1647,23 +1466,19 @@ class CalculatePaymentScheduleView(APIView):
                 if item_tariff_id is None:
                     continue
                 
-                # OPTIMIZATION: Dictionary dan olish
                 product = products_dict.get(product_id)
                 if not product:
                     continue
                 
-                # OPTIMIZATION: Dictionary dan olish
                 tariff = tariffs_dict.get(item_tariff_id)
                 if not tariff:
                     continue
                 
-                # Check if tariff is "No installment"
                 is_no_installment = tariff.name and "No installment" in tariff.name
                 
                 product_price = None
                 
                 if variation_id:
-                    # OPTIMIZATION: Dictionary dan olish
                     key = (product_id, str(variation_id))
                     product_id_obj = variation_dict_mode2.get(key)
                     if product_id_obj and product_id_obj.variation_name:
@@ -1739,7 +1554,6 @@ class CalculatePaymentScheduleView(APIView):
                 total_product_sum += product_remaining
                 total_remaining_after_advance += product_remaining
                 
-                # Only calculate monthly_payments if tariff is NOT "No installment"
                 if not is_no_installment:
                     if product_remaining > 0:
                         product_monthly_payment = round(
@@ -1778,7 +1592,6 @@ class CalculatePaymentScheduleView(APIView):
                         merged_payments[month_num]['amount'] += product_monthly_payment
                         max_months = max(max_months, month_num)
                 
-                # Calculate minimum_contribution for this product will be done after loop
             
             monthly_payments = []
             for month_num in sorted(merged_payments.keys()):
@@ -1790,23 +1603,17 @@ class CalculatePaymentScheduleView(APIView):
             
             monthly_payment_amount = merged_payments.get(1, {}).get('amount', 0) if merged_payments else 0
             
-            # Handle application logic for mode 2
             if user and counterparty_id:
                 try:
-                    # First check for today's application
                     today_app = get_today_application_by_counterparty(applications, counterparty_id)
                     
                     if today_app:
-                        # Use today's application
                         today_stage = today_app.get('fields', {}).get('stage', '')
                         application_status = today_stage
                         
-                        # Calculate minimum_contribution based on status
                         if today_stage in ['Accepted', 'Denied']:
-                            # Calculate minimum_contribution
                             risk_category_id = today_app.get('fields', {}).get('risk_category_id')
                             if risk_category_id:
-                                # Calculate minimum_contribution for all products
                                 for item in product_list:
                                     product_id = item.get('product_id')
                                     quantity = item.get('quantity', 1)
@@ -1837,14 +1644,12 @@ class CalculatePaymentScheduleView(APIView):
                                                         )
                                                         percentage = product_risk_category.percentage or 0
                                                         
-                                                        # Get product price
                                                         product_price = None
                                                         if variation_id:
                                                             product_id_obj_var = ProductIDs.objects.filter(
                                                                 product=product, variation_id=str(variation_id)
                                                             ).first()
                                                             if product_id_obj_var:
-                                                                # Find price from details
                                                                 details = product.details.all()
                                                                 for detail in details:
                                                                     if detail.price:
@@ -1868,25 +1673,15 @@ class CalculatePaymentScheduleView(APIView):
                         elif today_stage in ['Assessment', 'New']:
                             minimum_contribution = 0
                         
-                        # Create new application only if today's status is "Accepted" or "Success"
-                        # AND all today's applications are "Accepted" or "Success"
-                        # If status is "New" or "Assessment", don't create new one
-                        # Создавать новую заявку только если статус сегодняшней заявки "Accepted" или "Success"
-                        # И все сегодняшние заявки имеют статус "Accepted" или "Success"
-                        # Если статус "New" или "Assessment", не создавать новую
                         if today_stage in ['Accepted', 'Success'] and are_all_today_applications_accepted(applications, counterparty_id):
-                            # Get grist_product_ids from request
                             grist_product_ids = get_grist_product_ids_from_request(product_list)
                             
-                            # Convert grist_product_ids to product_ids from Price table
                             from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
                             product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
                             
-                            # Get risk_category_id from applications (try latest first, then search all)
                             risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                             current_date_str = datetime.now().strftime("%Y-%m-%d")
                             
-                            # DEBUG: risk_category_id
                             print(f"\n{'='*80}")
                             print(f"[CalculatePaymentScheduleView Mode 2] DEBUG - risk_category_id:")
                             print(f"  📊 risk_category_id: {risk_category_id}")
@@ -1900,7 +1695,6 @@ class CalculatePaymentScheduleView(APIView):
                             print(f"  📋 applications soni: {len(applications) if applications else 0}")
                             print(f"{'='*80}\n")
                             
-                            # Calculate total_advance_payment for mode 2
                             total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                             
                             try:
@@ -1926,30 +1720,22 @@ class CalculatePaymentScheduleView(APIView):
                                 print(f"  📥 result type: {type(result)}")
                                 
                                 if result:
-                                    # IMPORTANT: After creating new application, return "New" status
                                     application_status = 'New'
                             except Exception as e:
-                                import logging
-                                logger = logging.getLogger(__name__)
-                                logger.error(f"Error creating application (mode 2): {str(e)}")
+                                pass
                     else:
-                        # No application for today, check latest application to get risk_category_id
                         latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
                         
                         if latest_app:
                             latest_stage = latest_app.get('fields', {}).get('stage', '')
                             application_status = latest_stage
                             
-                            # Only create new application if latest stage is "Accepted" or "Success"
                             should_create_application = latest_stage in ['Accepted', 'Success']
                             
-                            # Calculate minimum_contribution based on status
                             if latest_stage in ['Accepted', 'Denied']:
-                                # Get risk_category_id from applications
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                             
                             if risk_category_id:
-                                # OPTIMIZATION: Barcha kerakli price_category_id larni yig'ish
                                 price_category_ids = set()
                                 product_data_list = []
                                 
@@ -1958,12 +1744,10 @@ class CalculatePaymentScheduleView(APIView):
                                     quantity = item.get('quantity', 1)
                                     variation_id = item.get('variation_id')
                                     
-                                    # Dictionary dan olish (yuqorida yaratilgan)
                                     product = products_dict.get(product_id)
                                     if not product:
                                         continue
                                     
-                                    # Dictionary dan olish
                                     key = (product_id, str(variation_id) if variation_id else None)
                                     product_id_obj = variation_dict_mode2.get(key)
                                     if not product_id_obj and variation_id is None:
@@ -1985,7 +1769,6 @@ class CalculatePaymentScheduleView(APIView):
                                         except (ValueError, TypeError):
                                             pass
                                 
-                                # OPTIMIZATION: Barcha ProductRiskCategory ni bir marta olish
                                 risk_category_dict_mode2 = {}
                                 if price_category_ids:
                                     risk_categories = ProductRiskCategory.objects.filter(
@@ -1997,19 +1780,16 @@ class CalculatePaymentScheduleView(APIView):
                                         for rc in risk_categories
                                     }
                                 
-                                # OPTIMIZATION: Loop ichida dictionary dan olish
                                 for prod_data in product_data_list:
                                     product = prod_data['product']
                                     quantity = prod_data['quantity']
                                     variation_id = prod_data['variation_id']
                                     price_category_id = prod_data['price_category_id']
                                     
-                                    # Dictionary dan olish
                                     product_risk_category = risk_category_dict_mode2.get(str(price_category_id))
                                     if product_risk_category:
                                         percentage = product_risk_category.percentage or 0
                                         
-                                        # Get product price (yuqorida hisoblangan)
                                         product_price = None
                                         if variation_id:
                                             key = (product.id, str(variation_id))
@@ -2032,21 +1812,16 @@ class CalculatePaymentScheduleView(APIView):
                             elif latest_stage in ['Assessment', 'New']:
                                 minimum_contribution = 0
                             
-                            # Create new application only if latest stage is Accepted or Success
                             if should_create_application:
                                 try:
-                                    # Get grist_product_ids from request (these are Price table record ids)
                                     grist_product_ids = get_grist_product_ids_from_request(product_list)
                                     
-                                    # Convert grist_product_ids to product_ids from Price table
                                     from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
                                     product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
                                     
-                                    # Get risk_category_id from applications (try latest first, then search all)
                                     risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                     current_date_str = datetime.now().strftime("%Y-%m-%d")
                                     
-                                    # DEBUG: risk_category_id
                                     print(f"\n{'='*80}")
                                     print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] DEBUG - risk_category_id:")
                                     print(f"  📊 risk_category_id: {risk_category_id}")
@@ -2060,7 +1835,6 @@ class CalculatePaymentScheduleView(APIView):
                                     print(f"  📋 applications soni: {len(applications) if applications else 0}")
                                     print(f"{'='*80}\n")
                                     
-                                    # Calculate total_advance_payment for mode 2
                                     total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                                     
                                     print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application chaqirilmoqda:")
@@ -2085,25 +1859,19 @@ class CalculatePaymentScheduleView(APIView):
                                     print(f"  📥 result type: {type(result)}")
                                     
                                     if result:
-                                        # IMPORTANT: After creating new application, return "New" status
                                         application_status = 'New'
                                 except Exception as e:
-                                    import logging
-                                    logger = logging.getLogger(__name__)
-                                    logger.error(f"Error creating application (mode 2): {str(e)}")
+                                    pass
                         else:
-                            # No application found, don't create (only create if latest is Accepted or Success)
                             application_status = None
                             minimum_contribution = 0
                 except Exception:
                     application_status = None
                     minimum_contribution = 0
         
-        # ability_to_order logic: Only True if status is "Accepted" and payment conditions are met
         ability_to_order = False
         
         if application_status == 'Accepted':
-            # Check if total_down_payment meets minimum_contribution requirement
             if calculation_mode == 1:
                 meets_minimum = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
             elif calculation_mode == 2:
@@ -2111,39 +1879,26 @@ class CalculatePaymentScheduleView(APIView):
             else:
                 meets_minimum = True
             
-            # If payment condition is met, check order status
             if meets_minimum:
-                # Get the latest order for this user
                 if user:
                     try:
                         latest_order = Orders.objects.filter(user=user).order_by('-created_at').first()
                         
                         if latest_order is None:
-                            # No orders exist for this user, ability_to_order is True
                             ability_to_order = True
                         elif latest_order.status == Orders.Status.FINISHED:
-                            # Latest order is finished, ability_to_order is True
                             ability_to_order = True
                         elif latest_order.status in [Orders.Status.PREPARING, Orders.Status.READY, Orders.Status.DELIVERING]:
-                            # Latest order is in progress, ability_to_order is False
                             ability_to_order = False
                         else:
-                            # Unknown status, default to False
                             ability_to_order = False
                     except Exception as e:
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.error(f"[CalculatePaymentScheduleView] Error checking order status: {str(e)}")
-                        # On error, default to False
                         ability_to_order = False
                 else:
-                    # No user, default to False
                     ability_to_order = False
             else:
-                # Payment condition not met
                 ability_to_order = False
         else:
-            # For all other statuses (New, Assessment, Denied, Denied by client, None, etc.), ability_to_order is False
             ability_to_order = False
         
         response_product_list = []
@@ -2201,10 +1956,6 @@ class CalculatePaymentScheduleView(APIView):
             "monthly_payments": monthly_payments,
             "product_list": response_product_list
         }
-        
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"[CalculatePaymentScheduleView] Final response - status: {application_status}, counterparty_id: {counterparty_id_for_response}, ability_to_order: {ability_to_order}, calculation_mode: {calculation_mode}")
         
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -2348,29 +2099,24 @@ class CalculatePaymentScheduleSimpleView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
-            # Check if tariff is "No installment"
             is_no_installment = tariff.name and "No installment" in tariff.name
             
             total_product_sum = 0
             products_data = []
             
-            # OPTIMIZATION: Barcha productlarni bir marta olish (bulk fetch)
             product_ids = [item.get('product_id') for item in product_list]
             products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
             products_dict = {p.id: p for p in products}
             
-            # OPTIMIZATION: Barcha ProductIDs ni bir marta olish
             product_ids_objs = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
-            product_ids_dict = {}  # product_id -> [ProductIDs objects]
-            variation_dict = {}    # (product_id, variation_id) -> ProductIDs object
+            product_ids_dict = {}
+            variation_dict = {}
             
             for pid_obj in product_ids_objs:
-                # Asosiy mapping
                 if pid_obj.product_id not in product_ids_dict:
                     product_ids_dict[pid_obj.product_id] = []
                 product_ids_dict[pid_obj.product_id].append(pid_obj)
                 
-                # Variation mapping
                 key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
                 variation_dict[key] = pid_obj
             
@@ -2386,7 +2132,6 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 product_price = None
                 
                 if variation_id:
-                    # OPTIMIZATION: Dictionary dan olish
                     key = (product_id, str(variation_id))
                     product_id_obj = variation_dict.get(key)
                     if product_id_obj and product_id_obj.variation_name:
@@ -2435,7 +2180,6 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 
                 total_product_sum += product_price * quantity
                 
-                # OPTIMIZATION: Dictionary dan olish
                 product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
                 response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
                 
@@ -2457,7 +2201,6 @@ class CalculatePaymentScheduleSimpleView(APIView):
             
             current_date = datetime.now()
             
-            # If tariff is "No installment", don't generate monthly_payments
             if not is_no_installment and monthly_payment_amount > 0:
                 safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
                 for month_num in range(1, safe_payments_count + 1):
@@ -2502,28 +2245,23 @@ class CalculatePaymentScheduleSimpleView(APIView):
             merged_payments = {}
             max_months = 0
             
-            # OPTIMIZATION: Barcha productlarni bir marta olish (bulk fetch)
             product_ids = [item.get('product_id') for item in product_list]
             products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
             products_dict = {p.id: p for p in products}
             
-            # OPTIMIZATION: Barcha tarifflarni bir marta olish
             tariff_ids = [item.get('tariff_id') for item in product_list if item.get('tariff_id')]
             tariffs = Tariffs.objects.filter(id__in=tariff_ids)
             tariffs_dict = {t.id: t for t in tariffs}
             
-            # OPTIMIZATION: Barcha ProductIDs ni bir marta olish
             product_ids_objs_mode2 = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
-            product_ids_dict_mode2 = {}  # product_id -> [ProductIDs objects]
-            variation_dict_mode2 = {}    # (product_id, variation_id) -> ProductIDs object
+            product_ids_dict_mode2 = {}
+            variation_dict_mode2 = {}
             
             for pid_obj in product_ids_objs_mode2:
-                # Asosiy mapping
                 if pid_obj.product_id not in product_ids_dict_mode2:
                     product_ids_dict_mode2[pid_obj.product_id] = []
                 product_ids_dict_mode2[pid_obj.product_id].append(pid_obj)
                 
-                # Variation mapping
                 key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
                 variation_dict_mode2[key] = pid_obj
             
@@ -2541,7 +2279,6 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 if not tariff:
                     continue
                 
-                # Check if tariff is "No installment"
                 is_no_installment = tariff.name and "No installment" in tariff.name
                 
                 product = products_dict.get(product_id)
@@ -2600,7 +2337,6 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 total_product_price = product_price * quantity
                 total_after_advance = max(0, total_product_price - float(item_advance_payment))
                 
-                # Only calculate monthly_payments if tariff is NOT "No installment"
                 if not is_no_installment:
                     if total_after_advance > 0:
                         monthly_payment = round(
@@ -2646,7 +2382,6 @@ class CalculatePaymentScheduleSimpleView(APIView):
                             
                             merged_payments[date_key]["payment"] += monthly_payment
             
-            # Convert merged_payments to list and sort by number
             monthly_payments = sorted(merged_payments.values(), key=lambda x: x["number"])
             
             response_product_list = []

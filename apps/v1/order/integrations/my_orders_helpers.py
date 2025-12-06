@@ -68,7 +68,6 @@ def process_transactions_for_sale_products(sale_products, all_transactions):
     """
     from datetime import datetime
     
-    # Build map: sale_id -> list of transactions
     transactions_by_sale_id = {}
     for transaction in all_transactions:
         fields = transaction.get("fields", {})
@@ -78,7 +77,6 @@ def process_transactions_for_sale_products(sale_products, all_transactions):
                 transactions_by_sale_id[sale_id] = []
             transactions_by_sale_id[sale_id].append(transaction)
     
-    # Process transactions for each sale product
     transactions_map = {}
     for sp in sale_products:
         sp_fields = sp.get("fields", {})
@@ -96,7 +94,6 @@ def process_transactions_for_sale_products(sale_products, all_transactions):
                 date_timestamp = trans_fields.get("date")
                 amount = trans_fields.get("amount", 0) or 0
                 
-                # Format date
                 formatted_date = None
                 if date_timestamp:
                     try:
@@ -123,7 +120,6 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
     if not sale_products:
         return [], []
     
-    # Collect all price_record_ids for bulk query
     price_record_ids = []
     price_record_to_product_info = {}
     
@@ -149,28 +145,22 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
     if not price_record_ids:
         return [], []
     
-    # Bulk query ProductIDs
     product_ids_objs = ProductIDs.objects.filter(
         grist_product_id__in=price_record_ids
     ).select_related('product')
     
-    # Get all product_ids for ProductDetails query
     product_ids_list = [obj.product.id for obj in product_ids_objs if obj.product]
     
-    # Bulk query ProductDetails
     product_details_objs = ProductDetails.objects.filter(
         product_id__in=product_ids_list
     ).select_related('product').prefetch_related('images')
     
-    # Get all ProductDetails IDs for ProductImages query
     product_details_ids = [detail.id for detail in product_details_objs]
     
-    # Bulk query ProductImages
     product_images_objs = ProductImages.objects.filter(
         product_details_id__in=product_details_ids
     ).select_related('product_details')
     
-    # Build map: product_details_id -> list of ProductImages
     product_images_map = {}
     for image in product_images_objs:
         product_details_id = image.product_details.id if image.product_details else None
@@ -179,7 +169,6 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
                 product_images_map[product_details_id] = []
             product_images_map[product_details_id].append(image)
     
-    # Build map: product_id -> list of ProductDetails
     product_details_map = {}
     for detail in product_details_objs:
         product_id = detail.product.id if detail.product else None
@@ -188,12 +177,10 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
                 product_details_map[product_id] = []
             product_details_map[product_id].append(detail)
     
-    # Build maps for quick lookup
     grist_id_to_product_id_obj = {}
     for obj in product_ids_objs:
         grist_id_to_product_id_obj[obj.grist_product_id] = obj
     
-    # Process results
     products_list = []
     variation_list = []
     seen_product_ids = set()
@@ -216,7 +203,6 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
                     product = product_id_obj.product
                     product_id = product.id
                     
-                    # Add full product data (only once per product)
                     if product_id not in seen_product_ids:
                         product_data = {
                             "id": product.id,
@@ -233,13 +219,11 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
                         products_list.append(product_data)
                         seen_product_ids.add(product_id)
                     
-                    # Get transactions for this sale product
                     transactions_list = []
                     if transactions_map and sale_id:
                         transactions_key = (sale_id, grist_product_id, grist_variation_id)
                         transactions_list = transactions_map.get(transactions_key, [])
                     
-                    # Add full variation data
                     variation_data = {
                         "id": product_id_obj.id,
                         "variation_id": product_id_obj.variation_id or "",
@@ -249,8 +233,6 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
                         "transactions": transactions_list
                     }
                     
-                    # Find matching ProductDetails for this variation
-                    # Match by comparing variation_name with ProductDetails (color, storage, sim)
                     matching_product_detail = None
                     if product_id_obj.product and product_id_obj.variation_name:
                         product_id = product_id_obj.product.id
@@ -264,15 +246,12 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
                             storage = detail.storage or ""
                             sim = detail.sim or ""
                             
-                            # Check color match
                             if color and color.upper() in variation_name_upper:
                                 score += 1
                             
-                            # Check storage match
                             if storage and storage.upper() in variation_name_upper:
                                 score += 1
                             
-                            # Check SIM match
                             if sim:
                                 sim_normalized = sim.replace("+", "").replace(" ", "").upper()
                                 variation_normalized = variation_name_upper.replace(" ", "").replace("+", "")
@@ -287,14 +266,11 @@ def process_sale_products(sale_products, product_price_map, transactions_map=Non
                                 elif "ESIM" in sim_normalized and "ESIM" in variation_name_upper:
                                     score += 1
                             
-                            # If score is better, update best match
                             if score > best_match_score:
                                 best_match_score = score
                                 matching_product_detail = detail
                     
-                    # Add ProductDetails data if found
                     if matching_product_detail:
-                        # Get ProductImages for this ProductDetails
                         product_images_list = []
                         product_details_id = matching_product_detail.id
                         images_for_detail = product_images_map.get(product_details_id, [])
@@ -336,7 +312,6 @@ def process_fact_planned_transactions(fact_planned_transactions):
     if not isinstance(fact_planned_transactions, list) or len(fact_planned_transactions) <= 1:
         return processed_transactions
     
-    # Skip first element "L"
     for trans in fact_planned_transactions[1:]:
         if not isinstance(trans, list) or len(trans) < 2:
             continue
@@ -344,7 +319,6 @@ def process_fact_planned_transactions(fact_planned_transactions):
         date_part = None
         amount = 0
         
-        # Check if it's ["L", ["d", timestamp], amount] format
         if len(trans) >= 3 and isinstance(trans[1], list):
             date_part = trans[1]
             amount = trans[2] if len(trans) > 2 else 0
@@ -356,7 +330,6 @@ def process_fact_planned_transactions(fact_planned_transactions):
             timestamp = date_part[1]
             is_paid = (amount == 0) if isinstance(amount, (int, float)) else False
             
-            # Format timestamp to date string (DD/MM/YYYY)
             formatted_date = None
             if timestamp:
                 try:
@@ -389,10 +362,8 @@ def process_sale_data(sale, sale_products, product_price_map, transactions_map=N
     debet_0 = fields.get("debet_0", 0) or 0
     fact_planned_transactions = fields.get("fact_planned_transactions", [])
     
-    # Process products
     products_list, variation_list = process_sale_products(sale_products, product_price_map, transactions_map)
     
-    # Process transactions for sale level (all transactions for this sale_id)
     sale_transactions = []
     if all_transactions and sale_id:
         for transaction in all_transactions:
@@ -403,7 +374,6 @@ def process_sale_data(sale, sale_products, product_price_map, transactions_map=N
                 date_timestamp = trans_fields.get("date")
                 amount = trans_fields.get("amount", 0) or 0
                 
-                # Format date
                 formatted_date = None
                 if date_timestamp:
                     try:
@@ -417,10 +387,8 @@ def process_sale_data(sale, sale_products, product_price_map, transactions_map=N
                     "amount": float(amount) if amount else 0
                 })
     
-    # Process fact_planned_transactions
     processed_transactions = process_fact_planned_transactions(fact_planned_transactions)
     
-    # Return first product (full data) or None
     product_data = products_list[0] if products_list else None
     
     sale_data = {
@@ -442,7 +410,6 @@ def separate_active_and_completed_sales(all_sales, sales_products_by_sale, produ
     Process all sales and separate into active and completed
     Returns (active_sales, completed_sales)
     """
-    # Process transactions for sale products
     all_sale_products = []
     for sale_products in sales_products_by_sale.values():
         all_sale_products.extend(sale_products)
@@ -458,7 +425,6 @@ def separate_active_and_completed_sales(all_sales, sales_products_by_sale, produ
         
         sale_data = process_sale_data(sale, sale_products, product_price_map, transactions_map, all_transactions)
         
-        # Separate by debet_0
         if sale_data["debet_0"] > 0:
             active_sales.append(sale_data)
         else:

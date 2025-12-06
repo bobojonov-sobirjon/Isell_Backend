@@ -213,7 +213,6 @@ class CreateOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Map calculation_mode to Orders.CalculationMode
         calculation_mode_map = {
             1: Orders.CalculationMode.MODE_1,
             2: Orders.CalculationMode.MODE_2
@@ -251,7 +250,6 @@ class CreateOrderView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
-            # Check if tariff is "No installment"
             is_no_installment = tariff.name and "No installment" in tariff.name
             
             total_product_sum = 0
@@ -278,7 +276,6 @@ class CreateOrderView(APIView):
                 product_price = None
                 variation_obj = None
                 
-                # Get variation if variation_id provided
                 if variation_id:
                     variation_obj = ProductIDs.objects.filter(product=product, variation_id=str(variation_id)).first()
                     if variation_obj and variation_obj.variation_name:
@@ -350,11 +347,9 @@ class CreateOrderView(APIView):
                     product_remaining * (tariff.coefficient / tariff.payments_count)
                 )
                 
-                # Get or create variation
                 if not variation_obj:
                     variation_obj = ProductIDs.objects.filter(product=product).first()
                 
-                # Validate that product still exists before creating order item
                 try:
                     Products.objects.get(id=product.id)
                 except Products.DoesNotExist:
@@ -373,7 +368,6 @@ class CreateOrderView(APIView):
                     down_payment=product_down_payment
                 )
                 
-                # Only create payment schedule if tariff is NOT "No installment"
                 if not is_no_installment:
                     current_date = datetime.now()
                     
@@ -432,13 +426,11 @@ class CreateOrderView(APIView):
                 
                 tariff = get_object_or_404(Tariffs, id=item_tariff_id)
                 
-                # Check if tariff is "No installment"
                 is_no_installment = tariff.name and "No installment" in tariff.name
                 
                 product_price = None
                 variation_obj = None
                 
-                # Get variation if variation_id provided
                 if variation_id:
                     variation_obj = ProductIDs.objects.filter(product=product, variation_id=str(variation_id)).first()
                     if variation_obj and variation_obj.variation_name:
@@ -503,11 +495,9 @@ class CreateOrderView(APIView):
                 if product_price is None:
                     continue
                 
-                # Get or create variation
                 if not variation_obj:
                     variation_obj = ProductIDs.objects.filter(product=product).first()
                 
-                # Validate that product still exists before creating order item
                 try:
                     Products.objects.get(id=product.id)
                 except Products.DoesNotExist:
@@ -529,7 +519,6 @@ class CreateOrderView(APIView):
                 product_total = product_price * quantity
                 product_remaining = product_total - float(item_down_payment)
                 
-                # Only calculate and create payment schedule if tariff is NOT "No installment"
                 if not is_no_installment:
                     monthly_payment_amount = round(
                         product_remaining * (tariff.coefficient / tariff.payments_count)
@@ -783,10 +772,8 @@ class MyOrdersView(APIView):
     def get(self, request):
         user = request.user
         
-        # Get user's orders (optimized query)
         orders = Orders.objects.filter(user=user).only('counterparty_id')
         
-        # Extract counterparty_ids
         counterparty_ids = extract_counterparty_ids_from_orders(orders)
         
         if not counterparty_ids:
@@ -795,7 +782,6 @@ class MyOrdersView(APIView):
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
-        # Get all Grist data (optimized - product_price fetched only once)
         all_sales, all_sales_products, product_price_data, all_transactions = get_all_grist_data_for_counterparties(
             list(counterparty_ids)
         )
@@ -806,11 +792,9 @@ class MyOrdersView(APIView):
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
-        # Build maps for quick lookup
         product_price_map = build_product_price_map(product_price_data)
         sales_products_by_sale = group_sales_products_by_sale_id(all_sales_products)
         
-        # Process and separate sales
         active_sales, completed_sales = separate_active_and_completed_sales(
             all_sales, sales_products_by_sale, product_price_map, all_transactions
         )

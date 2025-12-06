@@ -75,17 +75,13 @@ def get_transactions_by_counterparty_id(counterparty_id):
         
         records = data.get("records", [])
         
-        # Group by sale_id and filter by counterparty_id
-        # NOTE: In Grist, the field is named "counterpart_id" not "counterparty_id"
         sale_ids = set()
         
         for record in records:
             fields = record.get("fields", {})
-            # Try both field names for compatibility
             record_counterparty_id = fields.get("counterpart_id") or fields.get("counterparty_id")
             sale_id = fields.get("sale_id")
             
-            # Check type matching
             if record_counterparty_id is not None:
                 try:
                     if int(record_counterparty_id) == int(counterparty_id) and sale_id:
@@ -120,16 +116,12 @@ def get_sales_by_sale_ids_and_counterparty(sale_ids, counterparty_id):
         records = data.get("records", [])
         sale_ids_set = set(sale_ids)
         
-        # Filter by sale_id and counterparty_id
-        # NOTE: In Grist, the field is named "counterpart_id" not "counterparty_id"
         filtered_sales = []
         for record in records:
             record_id = record.get("id")
             fields = record.get("fields", {})
-            # Try both field names for compatibility
             record_counterparty_id = fields.get("counterpart_id") or fields.get("counterparty_id")
             
-            # Compare as integers for type safety
             try:
                 if record_id in sale_ids_set and int(record_counterparty_id) == int(counterparty_id):
                     filtered_sales.append(record)
@@ -163,7 +155,6 @@ def get_sales_products_by_sale_ids(sale_ids):
         records = data.get("records", [])
         sale_ids_set = set(sale_ids)
         
-        # Filter by sale_id
         filtered_products = []
         for record in records:
             fields = record.get("fields", {})
@@ -223,7 +214,6 @@ def get_transactions_by_sale_ids(sale_ids):
         records = data.get("records", [])
         sale_ids_set = set(sale_ids)
         
-        # Filter by sale_id
         filtered_transactions = []
         for record in records:
             fields = record.get("fields", {})
@@ -247,7 +237,6 @@ def get_all_grist_data_for_counterparties(counterparty_ids):
     if not counterparty_ids:
         return [], [], [], []
     
-    # Get all sale_ids for all counterparty_ids
     all_sale_ids = set()
     for counterparty_id in counterparty_ids:
         sale_ids = get_transactions_by_counterparty_id(counterparty_id)
@@ -256,9 +245,7 @@ def get_all_grist_data_for_counterparties(counterparty_ids):
     if not all_sale_ids:
         return [], [], [], []
     
-    # Fetch all data concurrently (product_price only once)
     with ThreadPoolExecutor(max_workers=5) as executor:
-        # Submit tasks for each counterparty_id
         sales_futures = []
         
         for counterparty_id in counterparty_ids:
@@ -268,14 +255,10 @@ def get_all_grist_data_for_counterparties(counterparty_ids):
                     executor.submit(get_sales_by_sale_ids_and_counterparty, sale_ids, counterparty_id)
                 )
         
-        # Sales products for all sale_ids at once
         sales_products_future = executor.submit(get_sales_products_by_sale_ids, list(all_sale_ids))
-        # Product price data only once
         product_price_future = executor.submit(get_product_price_data)
-        # Transactions for all sale_ids
         transactions_future = executor.submit(get_transactions_by_sale_ids, list(all_sale_ids))
         
-        # Collect results
         all_sales = []
         for future in sales_futures:
             all_sales.extend(future.result())
