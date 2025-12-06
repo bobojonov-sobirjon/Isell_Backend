@@ -370,6 +370,9 @@ class CalculateMonthlyPaymentView(APIView):
         )
         tariff = get_object_or_404(Tariffs, id=installment_period)
         
+        # Check if tariff is "No installment"
+        is_no_installment = tariff.name and "No installment" in tariff.name
+        
         product_price = None
         
         # Если передан variation_id, ищем цену в ProductDetails
@@ -428,10 +431,14 @@ class CalculateMonthlyPaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        monthly_payment = round(
-            (product_price - float(total_down_payment)) * 
-            get_tariff_coefficient_ratio(tariff)
-        )
+        # If tariff is "No installment", monthly_payment should be 0
+        if is_no_installment:
+            monthly_payment = 0
+        else:
+            monthly_payment = round(
+                (product_price - float(total_down_payment)) * 
+                get_tariff_coefficient_ratio(tariff)
+            )
         
         response_data = [
             {
@@ -1133,6 +1140,9 @@ class CalculatePaymentScheduleView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
+            # Check if tariff is "No installment"
+            is_no_installment = tariff.name and "No installment" in tariff.name
+            
             total_product_sum = 0
             products_data = []
             
@@ -1246,24 +1256,26 @@ class CalculatePaymentScheduleView(APIView):
             
             logger.info(f"[CalculatePaymentScheduleView Mode 1] User: {user}, User ID: {user.id if user else None}")
             
-            if user:
+            # Early return optimization: Skip application logic if tariff is "No installment"
+            if is_no_installment:
+                logger.info(f"[CalculatePaymentScheduleView Mode 1] Tariff is 'No installment', skipping application logic")
+            elif user:
                 try:
-                    # Use ThreadPoolExecutor for concurrent API calls
-                    with ThreadPoolExecutor(max_workers=2) as executor:
+                    # Use ThreadPoolExecutor for concurrent API calls - optimize by running all 3 in parallel
+                    with ThreadPoolExecutor(max_workers=3) as executor:
                         application_future = executor.submit(get_application)
                         grist_products_future = executor.submit(get_products_in_grist)
+                        counterparty_future = executor.submit(get_user_counterparty_id, user)
                         
                         application_data = application_future.result()
                         grist_products_data = grist_products_future.result()
+                        counterparty_id = counterparty_future.result()
                     
                     applications = application_data.get('records', [])
                     grist_products = grist_products_data.get('records', [])
+                    counterparty_id_for_response = counterparty_id
                     
                     logger.info(f"[CalculatePaymentScheduleView Mode 1] Applications count: {len(applications)}, Grist products count: {len(grist_products)}")
-                    
-                    # Get counterparty_id
-                    counterparty_id = get_user_counterparty_id(user)
-                    counterparty_id_for_response = counterparty_id
                     
                     logger.info(f"[CalculatePaymentScheduleView Mode 1] Counterparty ID: {counterparty_id}")
                     
@@ -1515,7 +1527,8 @@ class CalculatePaymentScheduleView(APIView):
             
             current_date = datetime.now()
             
-            if monthly_payment_amount > 0:
+            # If tariff is "No installment", don't generate monthly_payments
+            if not is_no_installment and monthly_payment_amount > 0:
                 safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
                 for month_num in range(1, safe_payments_count + 1):
                     year = current_date.year
@@ -1559,19 +1572,18 @@ class CalculatePaymentScheduleView(APIView):
             
             if user:
                 try:
-                    # Use ThreadPoolExecutor for concurrent API calls
-                    with ThreadPoolExecutor(max_workers=2) as executor:
+                    # Use ThreadPoolExecutor for concurrent API calls - optimize by running all 3 in parallel
+                    with ThreadPoolExecutor(max_workers=3) as executor:
                         application_future = executor.submit(get_application)
                         grist_products_future = executor.submit(get_products_in_grist)
+                        counterparty_future = executor.submit(get_user_counterparty_id, user)
                         
                         application_data = application_future.result()
                         grist_products_data = grist_products_future.result()
+                        counterparty_id = counterparty_future.result()
                     
                     applications = application_data.get('records', [])
                     grist_products = grist_products_data.get('records', [])
-                    
-                    # Get counterparty_id
-                    counterparty_id = get_user_counterparty_id(user)
                     counterparty_id_for_response = counterparty_id
                     
                     # Build grist_product_map
@@ -1644,6 +1656,9 @@ class CalculatePaymentScheduleView(APIView):
                 tariff = tariffs_dict.get(item_tariff_id)
                 if not tariff:
                     continue
+                
+                # Check if tariff is "No installment"
+                is_no_installment = tariff.name and "No installment" in tariff.name
                 
                 product_price = None
                 
@@ -1724,42 +1739,44 @@ class CalculatePaymentScheduleView(APIView):
                 total_product_sum += product_remaining
                 total_remaining_after_advance += product_remaining
                 
-                if product_remaining > 0:
-                    product_monthly_payment = round(
-                        product_remaining * get_tariff_coefficient_ratio(tariff)
-                    )
-                else:
-                    product_monthly_payment = 0
-                
-                current_date = datetime.now()
-                
-                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
-                for month_num in range(1, safe_payments_count + 1):
-                    year = current_date.year
-                    month = current_date.month + month_num
-                    day = current_date.day
+                # Only calculate monthly_payments if tariff is NOT "No installment"
+                if not is_no_installment:
+                    if product_remaining > 0:
+                        product_monthly_payment = round(
+                            product_remaining * get_tariff_coefficient_ratio(tariff)
+                        )
+                    else:
+                        product_monthly_payment = 0
                     
-                    while month > 12:
-                        month -= 12
-                        year += 1
+                    current_date = datetime.now()
                     
-                    max_day = monthrange(year, month)[1]
-                    if day > max_day:
-                        day = max_day
-                    
-                    payment_date = datetime(year, month, day)
-                    
-                    if tariff.offset_days:
-                        payment_date = payment_date + timedelta(days=tariff.offset_days)
-                    
-                    date_key = payment_date.strftime("%d/%m/%y")
-                    if month_num not in merged_payments:
-                        merged_payments[month_num] = {
-                            'date': date_key,
-                            'amount': 0
-                        }
-                    merged_payments[month_num]['amount'] += product_monthly_payment
-                    max_months = max(max_months, month_num)
+                    safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
+                    for month_num in range(1, safe_payments_count + 1):
+                        year = current_date.year
+                        month = current_date.month + month_num
+                        day = current_date.day
+                        
+                        while month > 12:
+                            month -= 12
+                            year += 1
+                        
+                        max_day = monthrange(year, month)[1]
+                        if day > max_day:
+                            day = max_day
+                        
+                        payment_date = datetime(year, month, day)
+                        
+                        if tariff.offset_days:
+                            payment_date = payment_date + timedelta(days=tariff.offset_days)
+                        
+                        date_key = payment_date.strftime("%d/%m/%y")
+                        if month_num not in merged_payments:
+                            merged_payments[month_num] = {
+                                'date': date_key,
+                                'amount': 0
+                            }
+                        merged_payments[month_num]['amount'] += product_monthly_payment
+                        max_months = max(max_months, month_num)
                 
                 # Calculate minimum_contribution for this product will be done after loop
             
@@ -2082,15 +2099,49 @@ class CalculatePaymentScheduleView(APIView):
                     application_status = None
                     minimum_contribution = 0
         
-        # ability_to_order logic: Only True if status is "Accepted"
+        # ability_to_order logic: Only True if status is "Accepted" and payment conditions are met
+        ability_to_order = False
+        
         if application_status == 'Accepted':
             # Check if total_down_payment meets minimum_contribution requirement
             if calculation_mode == 1:
-                ability_to_order = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
+                meets_minimum = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
             elif calculation_mode == 2:
-                ability_to_order = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
+                meets_minimum = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
             else:
-                ability_to_order = True
+                meets_minimum = True
+            
+            # If payment condition is met, check order status
+            if meets_minimum:
+                # Get the latest order for this user
+                if user:
+                    try:
+                        latest_order = Orders.objects.filter(user=user).order_by('-created_at').first()
+                        
+                        if latest_order is None:
+                            # No orders exist for this user, ability_to_order is True
+                            ability_to_order = True
+                        elif latest_order.status == Orders.Status.FINISHED:
+                            # Latest order is finished, ability_to_order is True
+                            ability_to_order = True
+                        elif latest_order.status in [Orders.Status.PREPARING, Orders.Status.READY, Orders.Status.DELIVERING]:
+                            # Latest order is in progress, ability_to_order is False
+                            ability_to_order = False
+                        else:
+                            # Unknown status, default to False
+                            ability_to_order = False
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"[CalculatePaymentScheduleView] Error checking order status: {str(e)}")
+                        # On error, default to False
+                        ability_to_order = False
+                else:
+                    # No user, default to False
+                    ability_to_order = False
+            else:
+                # Payment condition not met
+                ability_to_order = False
         else:
             # For all other statuses (New, Assessment, Denied, Denied by client, None, etc.), ability_to_order is False
             ability_to_order = False
@@ -2297,6 +2348,9 @@ class CalculatePaymentScheduleSimpleView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
+            # Check if tariff is "No installment"
+            is_no_installment = tariff.name and "No installment" in tariff.name
+            
             total_product_sum = 0
             products_data = []
             
@@ -2403,7 +2457,8 @@ class CalculatePaymentScheduleSimpleView(APIView):
             
             current_date = datetime.now()
             
-            if monthly_payment_amount > 0:
+            # If tariff is "No installment", don't generate monthly_payments
+            if not is_no_installment and monthly_payment_amount > 0:
                 safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
                 for month_num in range(1, safe_payments_count + 1):
                     year = current_date.year
@@ -2486,6 +2541,9 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 if not tariff:
                     continue
                 
+                # Check if tariff is "No installment"
+                is_no_installment = tariff.name and "No installment" in tariff.name
+                
                 product = products_dict.get(product_id)
                 if not product:
                     continue
@@ -2542,49 +2600,51 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 total_product_price = product_price * quantity
                 total_after_advance = max(0, total_product_price - float(item_advance_payment))
                 
-                if total_after_advance > 0:
-                    monthly_payment = round(
-                        total_after_advance * get_tariff_coefficient_ratio(tariff)
-                    )
-                else:
-                    monthly_payment = 0
-                
-                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
-                
-                if safe_payments_count > max_months:
-                    max_months = safe_payments_count
-                
-                current_date = datetime.now()
-                
-                if monthly_payment > 0:
-                    for month_num in range(1, safe_payments_count + 1):
-                        year = current_date.year
-                        month = current_date.month + month_num
-                        day = current_date.day
-                        
-                        while month > 12:
-                            month -= 12
-                            year += 1
-                        
-                        max_day = monthrange(year, month)[1]
-                        if day > max_day:
-                            day = max_day
-                        
-                        payment_date = datetime(year, month, day)
-                        
-                        if tariff.offset_days:
-                            payment_date = payment_date + timedelta(days=tariff.offset_days)
-                        
-                        date_key = payment_date.strftime("%d/%m/%y")
-                        
-                        if date_key not in merged_payments:
-                            merged_payments[date_key] = {
-                                "number": month_num,
-                                "date": date_key,
-                                "payment": 0
-                            }
-                        
-                        merged_payments[date_key]["payment"] += monthly_payment
+                # Only calculate monthly_payments if tariff is NOT "No installment"
+                if not is_no_installment:
+                    if total_after_advance > 0:
+                        monthly_payment = round(
+                            total_after_advance * get_tariff_coefficient_ratio(tariff)
+                        )
+                    else:
+                        monthly_payment = 0
+                    
+                    safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
+                    
+                    if safe_payments_count > max_months:
+                        max_months = safe_payments_count
+                    
+                    current_date = datetime.now()
+                    
+                    if monthly_payment > 0:
+                        for month_num in range(1, safe_payments_count + 1):
+                            year = current_date.year
+                            month = current_date.month + month_num
+                            day = current_date.day
+                            
+                            while month > 12:
+                                month -= 12
+                                year += 1
+                            
+                            max_day = monthrange(year, month)[1]
+                            if day > max_day:
+                                day = max_day
+                            
+                            payment_date = datetime(year, month, day)
+                            
+                            if tariff.offset_days:
+                                payment_date = payment_date + timedelta(days=tariff.offset_days)
+                            
+                            date_key = payment_date.strftime("%d/%m/%y")
+                            
+                            if date_key not in merged_payments:
+                                merged_payments[date_key] = {
+                                    "number": month_num,
+                                    "date": date_key,
+                                    "payment": 0
+                                }
+                            
+                            merged_payments[date_key]["payment"] += monthly_payment
             
             # Convert merged_payments to list and sort by number
             monthly_payments = sorted(merged_payments.values(), key=lambda x: x["number"])

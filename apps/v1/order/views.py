@@ -251,6 +251,9 @@ class CreateOrderView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
+            # Check if tariff is "No installment"
+            is_no_installment = tariff.name and "No installment" in tariff.name
+            
             total_product_sum = 0
             products_data = []
             for item in product_list:
@@ -370,32 +373,34 @@ class CreateOrderView(APIView):
                     down_payment=product_down_payment
                 )
                 
-                current_date = datetime.now()
-                
-                for month_num in range(1, tariff.payments_count + 1):
-                    year = current_date.year
-                    month = current_date.month + month_num
-                    day = current_date.day
+                # Only create payment schedule if tariff is NOT "No installment"
+                if not is_no_installment:
+                    current_date = datetime.now()
                     
-                    while month > 12:
-                        month -= 12
-                        year += 1
-                    
-                    max_day = monthrange(year, month)[1]
-                    if day > max_day:
-                        day = max_day
-                    
-                    payment_date = datetime(year, month, day)
-                    
-                    if tariff.offset_days:
-                        payment_date = payment_date + timedelta(days=tariff.offset_days)
-                    
-                    OrderPaymentSchedule.objects.create(
-                        order_item=order_item,
-                        month_number=month_num,
-                        payment_date=payment_date.date(),
-                        monthly_payment_amount=monthly_payment_amount
-                    )
+                    for month_num in range(1, tariff.payments_count + 1):
+                        year = current_date.year
+                        month = current_date.month + month_num
+                        day = current_date.day
+                        
+                        while month > 12:
+                            month -= 12
+                            year += 1
+                        
+                        max_day = monthrange(year, month)[1]
+                        if day > max_day:
+                            day = max_day
+                        
+                        payment_date = datetime(year, month, day)
+                        
+                        if tariff.offset_days:
+                            payment_date = payment_date + timedelta(days=tariff.offset_days)
+                        
+                        OrderPaymentSchedule.objects.create(
+                            order_item=order_item,
+                            month_number=month_num,
+                            payment_date=payment_date.date(),
+                            monthly_payment_amount=monthly_payment_amount
+                        )
         
         elif calculation_mode == 2:
             for item in product_list:
@@ -426,6 +431,9 @@ class CreateOrderView(APIView):
                     )
                 
                 tariff = get_object_or_404(Tariffs, id=item_tariff_id)
+                
+                # Check if tariff is "No installment"
+                is_no_installment = tariff.name and "No installment" in tariff.name
                 
                 product_price = None
                 variation_obj = None
@@ -521,36 +529,38 @@ class CreateOrderView(APIView):
                 product_total = product_price * quantity
                 product_remaining = product_total - float(item_down_payment)
                 
-                monthly_payment_amount = round(
-                    product_remaining * (tariff.coefficient / tariff.payments_count)
-                )
-                
-                current_date = datetime.now()
-                
-                for month_num in range(1, tariff.payments_count + 1):
-                    year = current_date.year
-                    month = current_date.month + month_num
-                    day = current_date.day
-                    
-                    while month > 12:
-                        month -= 12
-                        year += 1
-                    
-                    max_day = monthrange(year, month)[1]
-                    if day > max_day:
-                        day = max_day
-                    
-                    payment_date = datetime(year, month, day)
-                    
-                    if tariff.offset_days:
-                        payment_date = payment_date + timedelta(days=tariff.offset_days)
-                    
-                    OrderPaymentSchedule.objects.create(
-                        order_item=order_item,
-                        month_number=month_num,
-                        payment_date=payment_date.date(),
-                        monthly_payment_amount=monthly_payment_amount
+                # Only calculate and create payment schedule if tariff is NOT "No installment"
+                if not is_no_installment:
+                    monthly_payment_amount = round(
+                        product_remaining * (tariff.coefficient / tariff.payments_count)
                     )
+                    
+                    current_date = datetime.now()
+                    
+                    for month_num in range(1, tariff.payments_count + 1):
+                        year = current_date.year
+                        month = current_date.month + month_num
+                        day = current_date.day
+                        
+                        while month > 12:
+                            month -= 12
+                            year += 1
+                        
+                        max_day = monthrange(year, month)[1]
+                        if day > max_day:
+                            day = max_day
+                        
+                        payment_date = datetime(year, month, day)
+                        
+                        if tariff.offset_days:
+                            payment_date = payment_date + timedelta(days=tariff.offset_days)
+                        
+                        OrderPaymentSchedule.objects.create(
+                            order_item=order_item,
+                            month_number=month_num,
+                            payment_date=payment_date.date(),
+                            monthly_payment_amount=monthly_payment_amount
+                        )
         
         order_with_items = Orders.objects.prefetch_related(
             'items__payment_schedule',
