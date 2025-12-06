@@ -96,32 +96,26 @@ class PhoneLoginView(APIView):
         
         phone_number = serializer.validated_data['phone_number']
         
-        # Phone number ga + belgisi qo'shish (agar yo'q bo'lsa)
         phone_with_plus = phone_number
         if not phone_with_plus.startswith('+'):
             phone_with_plus = '+' + phone_with_plus
         
         try:
-            # Avval + bilan qidirish
             user = CustomUser.objects.get(phone_number=phone_with_plus)
             created = False
         except CustomUser.DoesNotExist:
-            # Agar + bilan topilmasa, + siz qidirish
             try:
                 user = CustomUser.objects.get(phone_number=phone_number)
                 created = False
-                # Phone number ni + bilan yangilash
                 if user.phone_number != phone_with_plus:
                     user.phone_number = phone_with_plus
                     user.save(update_fields=['phone_number'])
             except CustomUser.DoesNotExist:
-                # Username yaratish (+ bilan)
                 username_with_plus = phone_with_plus
                 username_exists = CustomUser.objects.filter(username=username_with_plus).exists()
                 if username_exists:
                     import uuid
                     username_with_plus = f"{phone_with_plus}_{uuid.uuid4().hex[:8]}"
-                
                 try:
                     user = CustomUser.objects.create(
                         phone_number=phone_with_plus,
@@ -139,7 +133,6 @@ class PhoneLoginView(APIView):
                     )
                     created = True
         else:
-            # Username ni ham + bilan yangilash (agar kerak bo'lsa)
             if not user.username or user.username != phone_with_plus:
                 username_exists = CustomUser.objects.filter(username=phone_with_plus).exclude(id=user.id).exists()
                 if not username_exists:
@@ -179,8 +172,7 @@ class PhoneLoginView(APIView):
         }
         
         if not sms_sent and code_in_response:
-            response_data["code"] = code_in_response
-            response_data["note"] = "SMS шаблон на модерации. Используйте код из ответа."
+            response_data["note"] = "Не работает SMS сервис."
         
         if sms_sent:
             message = "SMS код отправлен на ваш номер"
