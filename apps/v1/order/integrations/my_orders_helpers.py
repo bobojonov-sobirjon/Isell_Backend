@@ -2,11 +2,8 @@
 Helper functions for processing sales data
 Optimized for performance and clean code
 """
-import logging
 from collections import defaultdict
 from apps.v1.product.models import Products, ProductIDs, ProductDetails, ProductImages
-
-logger = logging.getLogger(__name__)
 
 
 def extract_counterparty_ids_from_orders(orders):
@@ -347,11 +344,12 @@ def process_fact_planned_transactions(fact_planned_transactions):
     return processed_transactions
 
 
-def process_sale_data(sale, sale_products, product_price_map, transactions_map=None, all_transactions=None):
+def process_sale_data(sale, sale_products, product_price_map, transactions_map=None, all_transactions=None, order=None):
     """
     Process a single sale and return sale data
     """
     from datetime import datetime
+    from apps.v1.order.models import Orders
     
     sale_id = sale.get("id")
     fields = sale.get("fields", {})
@@ -391,6 +389,10 @@ def process_sale_data(sale, sale_products, product_price_map, transactions_map=N
     
     product_data = products_list[0] if products_list else None
     
+    status = None
+    if order:
+        status = order.status
+    
     sale_data = {
         "product": product_data,
         "variation_list": variation_list,
@@ -399,13 +401,14 @@ def process_sale_data(sale, sale_products, product_price_map, transactions_map=N
         "paid": float(paid) if paid else 0,
         "debet_0": float(debet_0) if debet_0 else 0,
         "transactions": sale_transactions,
-        "fact_planned_transactions": processed_transactions
+        "fact_planned_transactions": processed_transactions,
+        "status": status
     }
     
     return sale_data
 
 
-def separate_active_and_completed_sales(all_sales, sales_products_by_sale, product_price_map, all_transactions):
+def separate_active_and_completed_sales(all_sales, sales_products_by_sale, product_price_map, all_transactions, orders_map=None):
     """
     Process all sales and separate into active and completed
     Returns (active_sales, completed_sales)
@@ -423,7 +426,18 @@ def separate_active_and_completed_sales(all_sales, sales_products_by_sale, produ
         sale_id = sale.get("id")
         sale_products = sales_products_by_sale.get(sale_id, [])
         
-        sale_data = process_sale_data(sale, sale_products, product_price_map, transactions_map, all_transactions)
+        sale_fields = sale.get("fields", {})
+        counterparty_id = sale_fields.get("counterpart_id") or sale_fields.get("counterparty_id")
+        
+        order = None
+        if orders_map and counterparty_id:
+            try:
+                counterparty_id_int = int(counterparty_id)
+                order = orders_map.get(counterparty_id_int)
+            except (ValueError, TypeError):
+                pass
+        
+        sale_data = process_sale_data(sale, sale_products, product_price_map, transactions_map, all_transactions, order)
         
         if sale_data["debet_0"] > 0:
             active_sales.append(sale_data)

@@ -772,9 +772,18 @@ class MyOrdersView(APIView):
     def get(self, request):
         user = request.user
         
-        orders = Orders.objects.filter(user=user).only('counterparty_id')
+        orders = Orders.objects.filter(user=user).only('counterparty_id', 'status')
         
         counterparty_ids = extract_counterparty_ids_from_orders(orders)
+        
+        orders_map = {}
+        for order in orders:
+            if order.counterparty_id:
+                try:
+                    counterparty_id = int(order.counterparty_id)
+                    orders_map[counterparty_id] = order
+                except (ValueError, TypeError):
+                    pass
         
         if not counterparty_ids:
             return Response({
@@ -796,7 +805,7 @@ class MyOrdersView(APIView):
         sales_products_by_sale = group_sales_products_by_sale_id(all_sales_products)
         
         active_sales, completed_sales = separate_active_and_completed_sales(
-            all_sales, sales_products_by_sale, product_price_map, all_transactions
+            all_sales, sales_products_by_sale, product_price_map, all_transactions, orders_map
         )
         
         return Response({
