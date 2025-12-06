@@ -172,6 +172,7 @@ class PhoneLoginView(APIView):
         }
         
         if not sms_sent and code_in_response:
+            response_data["code"] = code_in_response
             response_data["note"] = "Не работает SMS сервис."
         
         if sms_sent:
