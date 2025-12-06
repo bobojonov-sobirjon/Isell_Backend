@@ -45,11 +45,10 @@ class Orders(models.Model):
         MODE_2 = 'mode_2', 'Режим 2: Индивидуальный первоначальный взнос'
     
     class Status(models.TextChoices):
-        PENDING = 'pending', 'В ожидании'
-        PROCESSING = 'processing', 'В обработке'
-        SHIPPED = 'shipped', 'Отправлен'
-        DELIVERED = 'delivered', 'Доставлен'
-        CANCELLED = 'cancelled', 'Отменен'
+        PREPARING = 'preparing', 'Заказ готовится'
+        READY = 'ready', 'Заказ готов'
+        DELIVERING = 'delivering', 'Доставляется'
+        FINISHED = 'finished', 'Заказ получен'
     
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="Пользователь")
     order_calculation_mode = models.CharField(
@@ -60,7 +59,7 @@ class Orders(models.Model):
     status = models.CharField(
         max_length=255,
         choices=Status.choices,
-        default=Status.PENDING,
+        default=Status.PREPARING,
         verbose_name="Статус заказа"
     )
     company_address = models.ForeignKey(CompanyAddress, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Адрес компании")
