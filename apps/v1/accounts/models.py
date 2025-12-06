@@ -26,6 +26,13 @@ class CustomUser(AbstractUser):
         verbose_name="PNFL",
         help_text="Необязательно. Введите ваш PNFL."
     )
+    pass_data = models.CharField(
+        max_length=9,
+        blank=True,
+        null=True,
+        verbose_name="Серия и номер паспорта",
+        help_text="Необязательно. Введите вашу серию и номер паспорта."
+    )
     avatar = models.ImageField(
         upload_to='avatars/',
         blank=True,
