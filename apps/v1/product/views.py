@@ -1266,35 +1266,68 @@ class CalculatePaymentScheduleView(APIView):
                             if latest_stage in ['New', 'Assessment']:
                                 pass
                             elif latest_stage == 'Accepted':
-                                products_match = compare_application_products_with_request(latest_app, product_list)
+                                today_app = get_today_application_by_counterparty(applications, counterparty_id)
                                 
-                                if products_match:
-                                    pass
-                                else:
-                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                if today_app and today_app.get('fields', {}).get('stage', '') == 'Accepted' and are_all_today_applications_accepted(applications, counterparty_id):
+                                    products_match = compare_application_products_with_request(today_app, product_list)
                                     
-                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                    
-                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                    
-                                    try:
-                                        current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                        
-                                        result = post_to_grist_application(
-                                            counterparty_id=counterparty_id,
-                                            date=current_date_str,
-                                            stage='New',
-                                            risk_category_id=risk_category_id,
-                                            issue_limit=float(total_down_payment),
-                                            products=product_ids_for_application
-                                        )
-                                        
-                                        if result:
-                                            application_status = 'New'
-                                            minimum_contribution = 0
-                                    except Exception as e:
+                                    if products_match:
                                         pass
+                                    else:
+                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                        
+                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                        
+                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                        
+                                        try:
+                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                            
+                                            result = post_to_grist_application(
+                                                counterparty_id=counterparty_id,
+                                                date=current_date_str,
+                                                stage='New',
+                                                risk_category_id=risk_category_id,
+                                                issue_limit=float(total_down_payment),
+                                                products=product_ids_for_application
+                                            )
+                                            
+                                            if result:
+                                                application_status = 'New'
+                                                minimum_contribution = 0
+                                        except Exception as e:
+                                            pass
+                                else:
+                                    products_match = compare_application_products_with_request(latest_app, product_list)
+                                    
+                                    if products_match:
+                                        pass
+                                    else:
+                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                        
+                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                        
+                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                        
+                                        try:
+                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                            
+                                            result = post_to_grist_application(
+                                                counterparty_id=counterparty_id,
+                                                date=current_date_str,
+                                                stage='New',
+                                                risk_category_id=risk_category_id,
+                                                issue_limit=float(total_down_payment),
+                                                products=product_ids_for_application
+                                            )
+                                            
+                                            if result:
+                                                application_status = 'New'
+                                                minimum_contribution = 0
+                                        except Exception as e:
+                                            pass
                             
                             elif latest_stage == 'Success':
                                 grist_product_ids = get_grist_product_ids_from_request(product_list)
@@ -1674,55 +1707,111 @@ class CalculatePaymentScheduleView(APIView):
                             minimum_contribution = 0
                         
                         if today_stage in ['Accepted', 'Success'] and are_all_today_applications_accepted(applications, counterparty_id):
-                            grist_product_ids = get_grist_product_ids_from_request(product_list)
-                            
-                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                            
-                            risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                            current_date_str = datetime.now().strftime("%Y-%m-%d")
-                            
-                            print(f"\n{'='*80}")
-                            print(f"[CalculatePaymentScheduleView Mode 2] DEBUG - risk_category_id:")
-                            print(f"  📊 risk_category_id: {risk_category_id}")
-                            print(f"  📊 risk_category_id type: {type(risk_category_id)}")
-                            print(f"  📊 risk_category_id is None: {risk_category_id is None}")
-                            if risk_category_id is not None:
-                                print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
-                            else:
-                                print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
-                            print(f"  📋 counterparty_id: {counterparty_id}")
-                            print(f"  📋 applications soni: {len(applications) if applications else 0}")
-                            print(f"{'='*80}\n")
-                            
-                            total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
-                            
-                            try:
-                                print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application chaqirilmoqda:")
-                                print(f"  📤 counterparty_id: {counterparty_id}")
-                                print(f"  📤 date: {current_date_str}")
-                                print(f"  📤 stage: New")
-                                print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
-                                print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
-                                print(f"  📤 products: {product_ids_for_application}")
+                            if today_stage == 'Accepted':
+                                products_match = compare_application_products_with_request(today_app, product_list)
                                 
-                                result = post_to_grist_application(
-                                    counterparty_id=counterparty_id,
-                                    date=current_date_str,
-                                    stage='New',
-                                    risk_category_id=risk_category_id,
-                                    issue_limit=float(total_advance_payment_mode2),
-                                    products=product_ids_for_application
-                                )
+                                if products_match:
+                                    pass
+                                else:
+                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    
+                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    
+                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                    current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                    
+                                    print(f"\n{'='*80}")
+                                    print(f"[CalculatePaymentScheduleView Mode 2] DEBUG - risk_category_id:")
+                                    print(f"  📊 risk_category_id: {risk_category_id}")
+                                    print(f"  📊 risk_category_id type: {type(risk_category_id)}")
+                                    print(f"  📊 risk_category_id is None: {risk_category_id is None}")
+                                    if risk_category_id is not None:
+                                        print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
+                                    else:
+                                        print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
+                                    print(f"  📋 counterparty_id: {counterparty_id}")
+                                    print(f"  📋 applications soni: {len(applications) if applications else 0}")
+                                    print(f"{'='*80}\n")
+                                    
+                                    total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                    
+                                    try:
+                                        print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application chaqirilmoqda:")
+                                        print(f"  📤 counterparty_id: {counterparty_id}")
+                                        print(f"  📤 date: {current_date_str}")
+                                        print(f"  📤 stage: New")
+                                        print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
+                                        print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
+                                        print(f"  📤 products: {product_ids_for_application}")
+                                        
+                                        result = post_to_grist_application(
+                                            counterparty_id=counterparty_id,
+                                            date=current_date_str,
+                                            stage='New',
+                                            risk_category_id=risk_category_id,
+                                            issue_limit=float(total_advance_payment_mode2),
+                                            products=product_ids_for_application
+                                        )
+                                        
+                                        print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application natijasi:")
+                                        print(f"  📥 result: {result}")
+                                        print(f"  📥 result type: {type(result)}")
+                                        
+                                        if result:
+                                            application_status = 'New'
+                                    except Exception as e:
+                                        pass
+                            elif today_stage == 'Success':
+                                grist_product_ids = get_grist_product_ids_from_request(product_list)
                                 
-                                print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application natijasi:")
-                                print(f"  📥 result: {result}")
-                                print(f"  📥 result type: {type(result)}")
+                                from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
                                 
-                                if result:
-                                    application_status = 'New'
-                            except Exception as e:
-                                pass
+                                risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                
+                                print(f"\n{'='*80}")
+                                print(f"[CalculatePaymentScheduleView Mode 2] DEBUG - risk_category_id:")
+                                print(f"  📊 risk_category_id: {risk_category_id}")
+                                print(f"  📊 risk_category_id type: {type(risk_category_id)}")
+                                print(f"  📊 risk_category_id is None: {risk_category_id is None}")
+                                if risk_category_id is not None:
+                                    print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
+                                else:
+                                    print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
+                                print(f"  📋 counterparty_id: {counterparty_id}")
+                                print(f"  📋 applications soni: {len(applications) if applications else 0}")
+                                print(f"{'='*80}\n")
+                                
+                                total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                
+                                try:
+                                    print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application chaqirilmoqda:")
+                                    print(f"  📤 counterparty_id: {counterparty_id}")
+                                    print(f"  📤 date: {current_date_str}")
+                                    print(f"  📤 stage: New")
+                                    print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
+                                    print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
+                                    print(f"  📤 products: {product_ids_for_application}")
+                                    
+                                    result = post_to_grist_application(
+                                        counterparty_id=counterparty_id,
+                                        date=current_date_str,
+                                        stage='New',
+                                        risk_category_id=risk_category_id,
+                                        issue_limit=float(total_advance_payment_mode2),
+                                        products=product_ids_for_application
+                                    )
+                                    
+                                    print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application natijasi:")
+                                    print(f"  📥 result: {result}")
+                                    print(f"  📥 result type: {type(result)}")
+                                    
+                                    if result:
+                                        application_status = 'New'
+                                except Exception as e:
+                                    pass
                     else:
                         latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
                         
@@ -1813,55 +1902,111 @@ class CalculatePaymentScheduleView(APIView):
                                 minimum_contribution = 0
                             
                             if should_create_application:
-                                try:
-                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                if latest_stage == 'Accepted':
+                                    products_match = compare_application_products_with_request(latest_app, product_list)
                                     
-                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                    
-                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                    current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                    
-                                    print(f"\n{'='*80}")
-                                    print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] DEBUG - risk_category_id:")
-                                    print(f"  📊 risk_category_id: {risk_category_id}")
-                                    print(f"  📊 risk_category_id type: {type(risk_category_id)}")
-                                    print(f"  📊 risk_category_id is None: {risk_category_id is None}")
-                                    if risk_category_id is not None:
-                                        print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
+                                    if products_match:
+                                        pass
                                     else:
-                                        print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
-                                    print(f"  📋 counterparty_id: {counterparty_id}")
-                                    print(f"  📋 applications soni: {len(applications) if applications else 0}")
-                                    print(f"{'='*80}\n")
-                                    
-                                    total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
-                                    
-                                    print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application chaqirilmoqda:")
-                                    print(f"  📤 counterparty_id: {counterparty_id}")
-                                    print(f"  📤 date: {current_date_str}")
-                                    print(f"  📤 stage: New")
-                                    print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
-                                    print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
-                                    print(f"  📤 products: {product_ids_for_application}")
-                                    
-                                    result = post_to_grist_application(
-                                        counterparty_id=counterparty_id,
-                                        date=current_date_str,
-                                        stage='New',
-                                        risk_category_id=risk_category_id,
-                                        issue_limit=float(total_advance_payment_mode2),
-                                        products=product_ids_for_application
-                                    )
-                                    
-                                    print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application natijasi:")
-                                    print(f"  📥 result: {result}")
-                                    print(f"  📥 result type: {type(result)}")
-                                    
-                                    if result:
-                                        application_status = 'New'
-                                except Exception as e:
-                                    pass
+                                        try:
+                                            grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                            
+                                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                            
+                                            risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                            
+                                            print(f"\n{'='*80}")
+                                            print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] DEBUG - risk_category_id:")
+                                            print(f"  📊 risk_category_id: {risk_category_id}")
+                                            print(f"  📊 risk_category_id type: {type(risk_category_id)}")
+                                            print(f"  📊 risk_category_id is None: {risk_category_id is None}")
+                                            if risk_category_id is not None:
+                                                print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
+                                            else:
+                                                print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
+                                            print(f"  📋 counterparty_id: {counterparty_id}")
+                                            print(f"  📋 applications soni: {len(applications) if applications else 0}")
+                                            print(f"{'='*80}\n")
+                                            
+                                            total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                            
+                                            print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application chaqirilmoqda:")
+                                            print(f"  📤 counterparty_id: {counterparty_id}")
+                                            print(f"  📤 date: {current_date_str}")
+                                            print(f"  📤 stage: New")
+                                            print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
+                                            print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
+                                            print(f"  📤 products: {product_ids_for_application}")
+                                            
+                                            result = post_to_grist_application(
+                                                counterparty_id=counterparty_id,
+                                                date=current_date_str,
+                                                stage='New',
+                                                risk_category_id=risk_category_id,
+                                                issue_limit=float(total_advance_payment_mode2),
+                                                products=product_ids_for_application
+                                            )
+                                            
+                                            print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application natijasi:")
+                                            print(f"  📥 result: {result}")
+                                            print(f"  📥 result type: {type(result)}")
+                                            
+                                            if result:
+                                                application_status = 'New'
+                                        except Exception as e:
+                                            pass
+                                elif latest_stage == 'Success':
+                                    try:
+                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                        
+                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                        
+                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                        current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                        
+                                        print(f"\n{'='*80}")
+                                        print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] DEBUG - risk_category_id:")
+                                        print(f"  📊 risk_category_id: {risk_category_id}")
+                                        print(f"  📊 risk_category_id type: {type(risk_category_id)}")
+                                        print(f"  📊 risk_category_id is None: {risk_category_id is None}")
+                                        if risk_category_id is not None:
+                                            print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
+                                        else:
+                                            print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
+                                        print(f"  📋 counterparty_id: {counterparty_id}")
+                                        print(f"  📋 applications soni: {len(applications) if applications else 0}")
+                                        print(f"{'='*80}\n")
+                                        
+                                        total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                        
+                                        print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application chaqirilmoqda:")
+                                        print(f"  📤 counterparty_id: {counterparty_id}")
+                                        print(f"  📤 date: {current_date_str}")
+                                        print(f"  📤 stage: New")
+                                        print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
+                                        print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
+                                        print(f"  📤 products: {product_ids_for_application}")
+                                        
+                                        result = post_to_grist_application(
+                                            counterparty_id=counterparty_id,
+                                            date=current_date_str,
+                                            stage='New',
+                                            risk_category_id=risk_category_id,
+                                            issue_limit=float(total_advance_payment_mode2),
+                                            products=product_ids_for_application
+                                        )
+                                        
+                                        print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application natijasi:")
+                                        print(f"  📥 result: {result}")
+                                        print(f"  📥 result type: {type(result)}")
+                                        
+                                        if result:
+                                            application_status = 'New'
+                                    except Exception as e:
+                                        pass
                         else:
                             application_status = None
                             minimum_contribution = 0
