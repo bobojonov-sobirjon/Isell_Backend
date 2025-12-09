@@ -1561,68 +1561,72 @@ class CalculatePaymentScheduleView(APIView):
                                     application_status = 'Denied'
                                     ability_to_order = False
                             elif latest_stage == 'Accepted':
-                                today_app = get_today_application_by_counterparty(applications, counterparty_id)
+                                from django.utils import timezone
+                                import pytz
                                 
-                                if today_app and today_app.get('fields', {}).get('stage', '') == 'Accepted':
+                                today = datetime.now().date()
+                                today_datetime = datetime.combine(today, datetime.min.time())
+                                today_datetime_utc = timezone.make_aware(today_datetime, pytz.UTC)
+                                today_timestamp = int(today_datetime_utc.timestamp())
+                                today_start = today_timestamp
+                                today_end = today_timestamp + 86400
+                                
+                                today_accepted_apps = []
+                                for app in applications:
+                                    app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+                                    app_stage = app.get('fields', {}).get('stage', '')
+                                    app_date = app.get('fields', {}).get('date')
+                                    
+                                    if app_counterparty_id == counterparty_id and app_stage == 'Accepted' and app_date:
+                                        app_date_timestamp = None
+                                        if isinstance(app_date, (int, float)):
+                                            app_date_timestamp = int(app_date)
+                                        elif isinstance(app_date, str):
+                                            try:
+                                                parsed_date = datetime.strptime(app_date, "%Y-%m-%d").date()
+                                                parsed_datetime = datetime.combine(parsed_date, datetime.min.time())
+                                                parsed_datetime_utc = timezone.make_aware(parsed_datetime, pytz.UTC)
+                                                app_date_timestamp = int(parsed_datetime_utc.timestamp())
+                                            except:
+                                                pass
+                                        
+                                        if app_date_timestamp and today_start <= app_date_timestamp < today_end:
+                                            today_accepted_apps.append(app)
+                                
+                                found_today_accepted = False
+                                for today_app in today_accepted_apps:
                                     products_match = compare_application_products_with_request(today_app, product_list)
                                     
                                     if products_match:
+                                        found_today_accepted = True
                                         application_status = 'Accepted'
-                                    else:
-                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                        
-                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                        
-                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                        
-                                        try:
-                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                            
-                                            result = post_to_grist_application(
-                                                counterparty_id=counterparty_id,
-                                                date=current_date_str,
-                                                stage='New',
-                                                risk_category_id=risk_category_id,
-                                                issue_limit=float(total_down_payment),
-                                                products=product_ids_for_application
-                                            )
-                                            
-                                            if result:
-                                                application_status = 'New'
-                                                minimum_contribution = 0
-                                        except Exception:
-                                            pass
-                                else:
-                                    products_match = compare_application_products_with_request(latest_app, product_list)
+                                        break
+                                
+                                if not found_today_accepted:
+                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
                                     
-                                    if products_match:
-                                        application_status = 'Accepted'
-                                    else:
-                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    
+                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                    
+                                    try:
+                                        current_date_str = datetime.now().strftime("%Y-%m-%d")
                                         
-                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                        result = post_to_grist_application(
+                                            counterparty_id=counterparty_id,
+                                            date=current_date_str,
+                                            stage='New',
+                                            risk_category_id=risk_category_id,
+                                            issue_limit=float(total_down_payment),
+                                            products=product_ids_for_application
+                                        )
                                         
-                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                        
-                                        try:
-                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                            
-                                            result = post_to_grist_application(
-                                                counterparty_id=counterparty_id,
-                                                date=current_date_str,
-                                                stage='New',
-                                                risk_category_id=risk_category_id,
-                                                issue_limit=float(total_down_payment),
-                                                products=product_ids_for_application
-                                            )
-                                            
-                                            if result:
-                                                application_status = 'New'
-                                                minimum_contribution = 0
-                                        except Exception:
-                                            pass
+                                        if result:
+                                            application_status = 'New'
+                                            minimum_contribution = 0
+                                    except Exception:
+                                        pass
                             
                             if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
                                 if latest_stage == 'Success':
@@ -2196,68 +2200,72 @@ class CalculatePaymentScheduleView(APIView):
                             
                             if should_create_application:
                                 if latest_stage == 'Accepted':
-                                    today_app = get_today_application_by_counterparty(applications, counterparty_id)
+                                    from django.utils import timezone
+                                    import pytz
                                     
-                                    if today_app and today_app.get('fields', {}).get('stage', '') == 'Accepted':
+                                    today = datetime.now().date()
+                                    today_datetime = datetime.combine(today, datetime.min.time())
+                                    today_datetime_utc = timezone.make_aware(today_datetime, pytz.UTC)
+                                    today_timestamp = int(today_datetime_utc.timestamp())
+                                    today_start = today_timestamp
+                                    today_end = today_timestamp + 86400
+                                    
+                                    today_accepted_apps = []
+                                    for app in applications:
+                                        app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+                                        app_stage = app.get('fields', {}).get('stage', '')
+                                        app_date = app.get('fields', {}).get('date')
+                                        
+                                        if app_counterparty_id == counterparty_id and app_stage == 'Accepted' and app_date:
+                                            app_date_timestamp = None
+                                            if isinstance(app_date, (int, float)):
+                                                app_date_timestamp = int(app_date)
+                                            elif isinstance(app_date, str):
+                                                try:
+                                                    parsed_date = datetime.strptime(app_date, "%Y-%m-%d").date()
+                                                    parsed_datetime = datetime.combine(parsed_date, datetime.min.time())
+                                                    parsed_datetime_utc = timezone.make_aware(parsed_datetime, pytz.UTC)
+                                                    app_date_timestamp = int(parsed_datetime_utc.timestamp())
+                                                except:
+                                                    pass
+                                            
+                                            if app_date_timestamp and today_start <= app_date_timestamp < today_end:
+                                                today_accepted_apps.append(app)
+                                    
+                                    found_today_accepted = False
+                                    for today_app in today_accepted_apps:
                                         products_match = compare_application_products_with_request(today_app, product_list)
                                         
                                         if products_match:
+                                            found_today_accepted = True
                                             application_status = 'Accepted'
-                                        else:
-                                            try:
-                                                grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                                
-                                                from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                                product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                                
-                                                risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                                current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                                
-                                                total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
-                                                
-                                                result = post_to_grist_application(
-                                                    counterparty_id=counterparty_id,
-                                                    date=current_date_str,
-                                                    stage='New',
-                                                    risk_category_id=risk_category_id,
-                                                    issue_limit=float(total_advance_payment_mode2),
-                                                    products=product_ids_for_application
-                                                )
-                                                
-                                                if result:
-                                                    application_status = 'New'
-                                            except Exception:
-                                                pass
-                                    else:
-                                        products_match = compare_application_products_with_request(latest_app, product_list)
-                                        
-                                        if products_match:
-                                            application_status = 'Accepted'
-                                        else:
-                                            try:
-                                                grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                                
-                                                from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                                product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                                
-                                                risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                                current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                                
-                                                total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
-                                                
-                                                result = post_to_grist_application(
-                                                    counterparty_id=counterparty_id,
-                                                    date=current_date_str,
-                                                    stage='New',
-                                                    risk_category_id=risk_category_id,
-                                                    issue_limit=float(total_advance_payment_mode2),
-                                                    products=product_ids_for_application
-                                                )
-                                                
-                                                if result:
-                                                    application_status = 'New'
-                                            except Exception:
-                                                pass
+                                            break
+                                    
+                                    if not found_today_accepted:
+                                        try:
+                                            grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                            
+                                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                            
+                                            risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                            
+                                            total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                            
+                                            result = post_to_grist_application(
+                                                counterparty_id=counterparty_id,
+                                                date=current_date_str,
+                                                stage='New',
+                                                risk_category_id=risk_category_id,
+                                                issue_limit=float(total_advance_payment_mode2),
+                                                products=product_ids_for_application
+                                            )
+                                            
+                                            if result:
+                                                application_status = 'New'
+                                        except Exception:
+                                            pass
                                     
                                 if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
                                     if latest_stage == 'Success':
