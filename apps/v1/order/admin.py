@@ -81,25 +81,25 @@ class OrdersAdmin(admin.ModelAdmin):
         return obj.get_order_calculation_mode_display()
     get_calculation_mode_display.short_description = 'Режим расчета'
     
-    @admin.action(description='Изменить статус на "В обработке"')
+    @admin.action(description='Изменить статус на "Заказ готовится"')
     def mark_as_processing(self, request, queryset):
-        updated = queryset.update(status=Orders.Status.PROCESSING)
-        self.message_user(request, f'{updated} заказ(ов) изменено на "В обработке"')
+        updated = queryset.update(status=Orders.Status.PREPARING)
+        self.message_user(request, f'{updated} заказ(ов) изменено на "Заказ готовится"')
     
-    @admin.action(description='Изменить статус на "Отправлен"')
+    @admin.action(description='Изменить статус на "Доставляется"')
     def mark_as_shipped(self, request, queryset):
-        updated = queryset.update(status=Orders.Status.SHIPPED)
-        self.message_user(request, f'{updated} заказ(ов) изменено на "Отправлен"')
+        updated = queryset.update(status=Orders.Status.DELIVERING)
+        self.message_user(request, f'{updated} заказ(ов) изменено на "Доставляется"')
     
-    @admin.action(description='Изменить статус на "Доставлен"')
+    @admin.action(description='Изменить статус на "Заказ получен"')
     def mark_as_delivered(self, request, queryset):
-        updated = queryset.update(status=Orders.Status.DELIVERED)
-        self.message_user(request, f'{updated} заказ(ов) изменено на "Доставлен"')
+        updated = queryset.update(status=Orders.Status.FINISHED)
+        self.message_user(request, f'{updated} заказ(ов) изменено на "Заказ получен"')
     
-    @admin.action(description='Изменить статус на "Отменен"')
+    @admin.action(description='Изменить статус на "Заказ готов"')
     def mark_as_cancelled(self, request, queryset):
-        updated = queryset.update(status=Orders.Status.CANCELLED)
-        self.message_user(request, f'{updated} заказ(ов) изменено на "Отменен"')
+        updated = queryset.update(status=Orders.Status.READY)
+        self.message_user(request, f'{updated} заказ(ов) изменено на "Заказ готов"')
     
     fieldsets = (
         ('Основная информация', {

@@ -228,7 +228,7 @@ class CreateOrderView(APIView):
         order = Orders.objects.create(
             user=request.user,
             order_calculation_mode=order_calculation_mode_value,
-            status=Orders.Status.PENDING,
+            status=Orders.Status.PREPARING,
             counterparty_id=counterparty_id,
         )
         
