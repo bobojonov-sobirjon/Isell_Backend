@@ -1364,7 +1364,7 @@ class CalculatePaymentScheduleView(APIView):
                                     products_match = compare_application_products_with_request(today_app, product_list)
                                     
                                     if products_match:
-                                        pass
+                                        application_status = 'Accepted'
                                     else:
                                         grist_product_ids = get_grist_product_ids_from_request(product_list)
                                         
@@ -1394,7 +1394,7 @@ class CalculatePaymentScheduleView(APIView):
                                     products_match = compare_application_products_with_request(latest_app, product_list)
                                     
                                     if products_match:
-                                        pass
+                                        application_status = 'Accepted'
                                     else:
                                         grist_product_ids = get_grist_product_ids_from_request(product_list)
                                         
@@ -1948,7 +1948,7 @@ class CalculatePaymentScheduleView(APIView):
                                     products_match = compare_application_products_with_request(latest_app, product_list)
                                     
                                     if products_match:
-                                        pass
+                                        application_status = 'Accepted'
                                     else:
                                         try:
                                             grist_product_ids = get_grist_product_ids_from_request(product_list)
