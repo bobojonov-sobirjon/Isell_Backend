@@ -764,17 +764,48 @@ def get_grist_product_ids_from_price_product_ids(price_product_ids):
     except Exception as e:
         return []
 
+def get_base_product_ids_from_price_product_ids(price_product_ids):
+    """
+    Get base product_ids from Price table product_ids.
+    Price table product_ids are actually grist_product_ids (Price table record ids).
+    We need to get the base product_id from ProductIDs model.
+    
+    Args:
+        price_product_ids: List of product_ids from Price table fields.product_id (these are actually grist_product_ids)
+    
+    Returns:
+        List of base product_ids (Products.id)
+    """
+    if not price_product_ids:
+        return []
+    
+    base_product_ids = []
+    
+    for price_product_id in price_product_ids:
+        if not price_product_id:
+            continue
+        
+        try:
+            product_id_obj = ProductIDs.objects.filter(grist_product_id=str(price_product_id)).first()
+            if product_id_obj and product_id_obj.product:
+                base_product_ids.append(product_id_obj.product.id)
+        except Exception:
+            continue
+    
+    return base_product_ids
+
 def compare_application_products_with_request(application, product_list):
     """
     Compare products from application with products from request.
-    Variation_id ni ham hisobga oladi - grist_product_id larni to'g'ridan-to'g'ri solishtiradi.
+    Faqat asosiy product_id larni solishtiradi (variation_id ni hisobga olmaydi).
+    Agar bir xil product bo'lsa (lekin boshqa variation_id bilan), True qaytaradi.
     
     Args:
         application: Application record from Grist (has fields.products which are Price table product_ids)
         product_list: List of products from request (has product_id and variation_id)
     
     Returns:
-        True if products match (including variation_id), False otherwise
+        True if base products match (ignoring variation_id), False otherwise
     """
     if not application or not product_list:
         return False
@@ -788,13 +819,13 @@ def compare_application_products_with_request(application, product_list):
         if not app_products:
             return False
         
-        app_grist_product_ids = get_grist_product_ids_from_price_product_ids(app_products)
-        request_grist_product_ids = get_grist_product_ids_from_request(product_list)
+        app_base_product_ids = get_base_product_ids_from_price_product_ids(app_products)
+        request_base_product_ids = [item.get('product_id') for item in product_list if item.get('product_id')]
         
-        app_grist_set = set(str(g) for g in app_grist_product_ids if g)
-        request_grist_set = set(str(g) for g in request_grist_product_ids if g)
+        app_base_set = set(int(p) for p in app_base_product_ids if p)
+        request_base_set = set(int(p) for p in request_base_product_ids if p)
         
-        return app_grist_set == request_grist_set
+        return app_base_set == request_base_set
         
     except Exception as e:
         return False
