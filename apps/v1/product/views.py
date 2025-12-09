@@ -1965,7 +1965,7 @@ class CalculatePaymentScheduleSimpleView(APIView):
     Simplified view for calculating payment schedule - only returns monthly_payments and product_list.
     Does NOT post to ISell_APPLICATION or request ISell_COUNTERPARTIES.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     
     @swagger_auto_schema(
         tags=['Продукты'],

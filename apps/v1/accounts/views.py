@@ -418,16 +418,26 @@ class ResendSMSCodeView(APIView):
         
         phone_number = serializer.validated_data['phone_number']
         
+        phone_with_plus = phone_number
+        if not phone_with_plus.startswith('+'):
+            phone_with_plus = '+' + phone_with_plus
+        
         try:
-            user = CustomUser.objects.get(phone_number=phone_number)
+            user = CustomUser.objects.get(phone_number=phone_with_plus)
         except CustomUser.DoesNotExist:
-            return Response(
-                {
-                    "success": False,
-                    "message": "Сначала запросите код через /login/"
-                },
-                status=status.HTTP_404_NOT_FOUND
-            )
+            try:
+                user = CustomUser.objects.get(phone_number=phone_number)
+                if user.phone_number != phone_with_plus:
+                    user.phone_number = phone_with_plus
+                    user.save(update_fields=['phone_number'])
+            except CustomUser.DoesNotExist:
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Сначала запросите код через /login/"
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
         
         SmsCode.objects.filter(user=user).delete()
         
