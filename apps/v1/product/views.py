@@ -703,16 +703,78 @@ def get_grist_product_ids_from_request(product_list):
     
     return grist_product_ids
 
+def get_grist_product_ids_from_price_product_ids(price_product_ids):
+    """
+    Get grist_product_ids (Price table record ids) from Price table product_ids.
+    Reverse of get_product_ids_from_price_table_by_grist_ids.
+    
+    Args:
+        price_product_ids: List of product_ids from Price table fields.product_id
+    
+    Returns:
+        List of grist_product_ids (Price table record ids)
+    """
+    if not price_product_ids:
+        return []
+    
+    try:
+        from apps.v1.order.integrations.advanced_payment_assessment import ISell_PRODUCT_PRICE, get_url
+        import aiohttp
+        import asyncio
+        
+        if not ISell_PRODUCT_PRICE:
+            return []
+        
+        url = get_url(ISell_PRODUCT_PRICE)
+        
+        async def fetch_price_data_async(session, url):
+            try:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        return await response.json()
+            except Exception:
+                return None
+        
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                data = await fetch_price_data_async(session, url)
+                return data
+        
+        data = asyncio.run(fetch())
+        
+        if not data:
+            return []
+        
+        records = data.get("records", [])
+        
+        grist_product_ids = []
+        price_product_ids_set = set(str(p) for p in price_product_ids if p)
+        
+        for record in records:
+            record_id = record.get("id")
+            fields = record.get("fields", {})
+            product_id = fields.get("product_id")
+            
+            if product_id and str(product_id) in price_product_ids_set:
+                if record_id:
+                    grist_product_ids.append(record_id)
+        
+        return grist_product_ids
+        
+    except Exception as e:
+        return []
+
 def compare_application_products_with_request(application, product_list):
     """
     Compare products from application with products from request.
+    Variation_id ni ham hisobga oladi - grist_product_id larni to'g'ridan-to'g'ri solishtiradi.
     
     Args:
         application: Application record from Grist (has fields.products which are Price table product_ids)
         product_list: List of products from request (has product_id and variation_id)
     
     Returns:
-        True if products match, False otherwise
+        True if products match (including variation_id), False otherwise
     """
     if not application or not product_list:
         return False
@@ -723,16 +785,16 @@ def compare_application_products_with_request(application, product_list):
         if isinstance(app_products, list) and len(app_products) > 0 and app_products[0] == "L":
             app_products = app_products[1:] if len(app_products) > 1 else []
         
-        app_products_set = set(str(p) for p in app_products if p)
+        if not app_products:
+            return False
         
-        grist_product_ids = get_grist_product_ids_from_request(product_list)
+        app_grist_product_ids = get_grist_product_ids_from_price_product_ids(app_products)
+        request_grist_product_ids = get_grist_product_ids_from_request(product_list)
         
-        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-        request_product_ids = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+        app_grist_set = set(str(g) for g in app_grist_product_ids if g)
+        request_grist_set = set(str(g) for g in request_grist_product_ids if g)
         
-        request_products_set = set(str(p) for p in request_product_ids if p)
-        
-        return app_products_set == request_products_set
+        return app_grist_set == request_grist_set
         
     except Exception as e:
         return False
