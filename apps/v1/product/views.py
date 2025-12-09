@@ -1313,7 +1313,6 @@ class CalculatePaymentScheduleView(APIView):
                                                     
                                                     product_risk_category = risk_category_dict.get(price_category_id)
                                                     if product_risk_category:
-                                                        print(f"product_risk_category: {product_risk_category}")
                                                         percentage = product_risk_category.percentage or 0
                                                         product_total = product_price * quantity
                                                         contribution = product_total * percentage
@@ -1783,30 +1782,9 @@ class CalculatePaymentScheduleView(APIView):
                                     risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                     current_date_str = datetime.now().strftime("%Y-%m-%d")
                                     
-                                    print(f"\n{'='*80}")
-                                    print(f"[CalculatePaymentScheduleView Mode 2] DEBUG - risk_category_id:")
-                                    print(f"  📊 risk_category_id: {risk_category_id}")
-                                    print(f"  📊 risk_category_id type: {type(risk_category_id)}")
-                                    print(f"  📊 risk_category_id is None: {risk_category_id is None}")
-                                    if risk_category_id is not None:
-                                        print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
-                                    else:
-                                        print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
-                                    print(f"  📋 counterparty_id: {counterparty_id}")
-                                    print(f"  📋 applications soni: {len(applications) if applications else 0}")
-                                    print(f"{'='*80}\n")
-                                    
                                     total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                                     
                                     try:
-                                        print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application chaqirilmoqda:")
-                                        print(f"  📤 counterparty_id: {counterparty_id}")
-                                        print(f"  📤 date: {current_date_str}")
-                                        print(f"  📤 stage: New")
-                                        print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
-                                        print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
-                                        print(f"  📤 products: {product_ids_for_application}")
-                                        
                                         result = post_to_grist_application(
                                             counterparty_id=counterparty_id,
                                             date=current_date_str,
@@ -1815,10 +1793,6 @@ class CalculatePaymentScheduleView(APIView):
                                             issue_limit=float(total_advance_payment_mode2),
                                             products=product_ids_for_application
                                         )
-                                        
-                                        print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application natijasi:")
-                                        print(f"  📥 result: {result}")
-                                        print(f"  📥 result type: {type(result)}")
                                         
                                         if result:
                                             application_status = 'New'
@@ -1833,30 +1807,9 @@ class CalculatePaymentScheduleView(APIView):
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                 current_date_str = datetime.now().strftime("%Y-%m-%d")
                                 
-                                print(f"\n{'='*80}")
-                                print(f"[CalculatePaymentScheduleView Mode 2] DEBUG - risk_category_id:")
-                                print(f"  📊 risk_category_id: {risk_category_id}")
-                                print(f"  📊 risk_category_id type: {type(risk_category_id)}")
-                                print(f"  📊 risk_category_id is None: {risk_category_id is None}")
-                                if risk_category_id is not None:
-                                    print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
-                                else:
-                                    print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
-                                print(f"  📋 counterparty_id: {counterparty_id}")
-                                print(f"  📋 applications soni: {len(applications) if applications else 0}")
-                                print(f"{'='*80}\n")
-                                
                                 total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                                 
                                 try:
-                                    print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application chaqirilmoqda:")
-                                    print(f"  📤 counterparty_id: {counterparty_id}")
-                                    print(f"  📤 date: {current_date_str}")
-                                    print(f"  📤 stage: New")
-                                    print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
-                                    print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
-                                    print(f"  📤 products: {product_ids_for_application}")
-                                    
                                     result = post_to_grist_application(
                                         counterparty_id=counterparty_id,
                                         date=current_date_str,
@@ -1865,10 +1818,6 @@ class CalculatePaymentScheduleView(APIView):
                                         issue_limit=float(total_advance_payment_mode2),
                                         products=product_ids_for_application
                                     )
-                                    
-                                    print(f"[CalculatePaymentScheduleView Mode 2] post_to_grist_application natijasi:")
-                                    print(f"  📥 result: {result}")
-                                    print(f"  📥 result type: {type(result)}")
                                     
                                     if result:
                                         application_status = 'New'
@@ -1979,28 +1928,7 @@ class CalculatePaymentScheduleView(APIView):
                                             risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                             current_date_str = datetime.now().strftime("%Y-%m-%d")
                                             
-                                            print(f"\n{'='*80}")
-                                            print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] DEBUG - risk_category_id:")
-                                            print(f"  📊 risk_category_id: {risk_category_id}")
-                                            print(f"  📊 risk_category_id type: {type(risk_category_id)}")
-                                            print(f"  📊 risk_category_id is None: {risk_category_id is None}")
-                                            if risk_category_id is not None:
-                                                print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
-                                            else:
-                                                print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
-                                            print(f"  📋 counterparty_id: {counterparty_id}")
-                                            print(f"  📋 applications soni: {len(applications) if applications else 0}")
-                                            print(f"{'='*80}\n")
-                                            
                                             total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
-                                            
-                                            print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application chaqirilmoqda:")
-                                            print(f"  📤 counterparty_id: {counterparty_id}")
-                                            print(f"  📤 date: {current_date_str}")
-                                            print(f"  📤 stage: New")
-                                            print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
-                                            print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
-                                            print(f"  📤 products: {product_ids_for_application}")
                                             
                                             result = post_to_grist_application(
                                                 counterparty_id=counterparty_id,
@@ -2010,10 +1938,6 @@ class CalculatePaymentScheduleView(APIView):
                                                 issue_limit=float(total_advance_payment_mode2),
                                                 products=product_ids_for_application
                                             )
-                                            
-                                            print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application natijasi:")
-                                            print(f"  📥 result: {result}")
-                                            print(f"  📥 result type: {type(result)}")
                                             
                                             if result:
                                                 application_status = 'New'
@@ -2029,28 +1953,7 @@ class CalculatePaymentScheduleView(APIView):
                                         risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                         current_date_str = datetime.now().strftime("%Y-%m-%d")
                                         
-                                        print(f"\n{'='*80}")
-                                        print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] DEBUG - risk_category_id:")
-                                        print(f"  📊 risk_category_id: {risk_category_id}")
-                                        print(f"  📊 risk_category_id type: {type(risk_category_id)}")
-                                        print(f"  📊 risk_category_id is None: {risk_category_id is None}")
-                                        if risk_category_id is not None:
-                                            print(f"  ✅ risk_category_id mavjud: {risk_category_id}")
-                                        else:
-                                            print(f"  ⚠️  risk_category_id None - Grist'ga yuborilmaydi")
-                                        print(f"  📋 counterparty_id: {counterparty_id}")
-                                        print(f"  📋 applications soni: {len(applications) if applications else 0}")
-                                        print(f"{'='*80}\n")
-                                        
                                         total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
-                                        
-                                        print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application chaqirilmoqda:")
-                                        print(f"  📤 counterparty_id: {counterparty_id}")
-                                        print(f"  📤 date: {current_date_str}")
-                                        print(f"  📤 stage: New")
-                                        print(f"  📤 risk_category_id: {risk_category_id} (type: {type(risk_category_id)})")
-                                        print(f"  📤 issue_limit: {float(total_advance_payment_mode2)}")
-                                        print(f"  📤 products: {product_ids_for_application}")
                                         
                                         result = post_to_grist_application(
                                             counterparty_id=counterparty_id,
@@ -2060,10 +1963,6 @@ class CalculatePaymentScheduleView(APIView):
                                             issue_limit=float(total_advance_payment_mode2),
                                             products=product_ids_for_application
                                         )
-                                        
-                                        print(f"[CalculatePaymentScheduleView Mode 2 - Latest App] post_to_grist_application natijasi:")
-                                        print(f"  📥 result: {result}")
-                                        print(f"  📥 result type: {type(result)}")
                                         
                                         if result:
                                             application_status = 'New'
