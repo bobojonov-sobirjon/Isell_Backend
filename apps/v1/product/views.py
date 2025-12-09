@@ -1679,7 +1679,30 @@ class CalculatePaymentScheduleView(APIView):
                             if application_status != 'Accepted':
                                 minimum_contribution = 0
                         else:
-                            application_status = None
+                            grist_product_ids = get_grist_product_ids_from_request(product_list)
+                            
+                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                            
+                            risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                            
+                            try:
+                                current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                
+                                result = post_to_grist_application(
+                                    counterparty_id=counterparty_id,
+                                    date=current_date_str,
+                                    stage='New',
+                                    risk_category_id=risk_category_id,
+                                    issue_limit=float(total_down_payment),
+                                    products=product_ids_for_application
+                                )
+                                
+                                if result:
+                                    application_status = 'New'
+                            except Exception:
+                                pass
+                            
                             minimum_contribution = 0
                 except Exception as e:
                     minimum_contribution = 0
