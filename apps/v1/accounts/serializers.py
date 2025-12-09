@@ -43,7 +43,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = CustomUser
         fields = [
             'id', 'phone_number', 'first_name', 'last_name', 
-            'email', 'date_of_birth', 'avatar', 'address',
+            'email', 'date_of_birth', 'avatar', 'address', 'pass_data',
             'city', 'country', 'region', 'street', 'house', 'apartment', 'postal_index',
             'pnfl', 'is_veriifed_my_id', 'created_at', 'updated_at'
         ]

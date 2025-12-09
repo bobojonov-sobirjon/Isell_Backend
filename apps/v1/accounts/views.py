@@ -223,15 +223,8 @@ class VerifySMSCodeView(APIView):
                 examples={
                     "application/json": {
                         "success": True,
-                        "message": "Успешная авторизация",
+                        "message": "Код подтвержден",
                         "data": {
-                            "user": {
-                                "id": 1,
-                                "phone_number": "998901234567",
-                                "first_name": "",
-                                "last_name": "",
-                                "email": ""
-                            },
                             "tokens": {
                                 "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
                                 "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc..."
@@ -329,10 +322,20 @@ class VerifySMSCodeView(APIView):
             expires_at__lt=timezone.now()
         ).delete()
         
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+        
         return Response(
             {
                 "success": True,
-                "message": "Код подтвержден"
+                "message": "Код подтвержден",
+                "data": {
+                    "tokens": {
+                        "access": access_token,
+                        "refresh": refresh_token
+                    }
+                }
             },
             status=status.HTTP_200_OK
         )

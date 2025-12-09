@@ -766,12 +766,13 @@ def get_grist_product_ids_from_price_product_ids(price_product_ids):
 
 def get_base_product_ids_from_price_product_ids(price_product_ids):
     """
-    Get base product_ids from Price table product_ids.
-    Price table product_ids are actually grist_product_ids (Price table record ids).
-    We need to get the base product_id from ProductIDs model.
+    Get base product_ids from Price table record IDs.
+    Price table product_ids in applications are actually Price table record IDs.
+    We need to get base product_id directly from ProductIDs model using grist_product_id.
     
     Args:
-        price_product_ids: List of product_ids from Price table fields.product_id (these are actually grist_product_ids)
+        price_product_ids: List of Price table record IDs (from application fields.products)
+        These are actually grist_product_ids stored in ProductIDs model
     
     Returns:
         List of base product_ids (Products.id)
@@ -787,31 +788,197 @@ def get_base_product_ids_from_price_product_ids(price_product_ids):
         
         try:
             product_id_obj = ProductIDs.objects.filter(grist_product_id=str(price_product_id)).first()
+            
             if product_id_obj and product_id_obj.product:
-                base_product_ids.append(product_id_obj.product.id)
+                base_product_id = product_id_obj.product.id
+                base_product_ids.append(base_product_id)
         except Exception:
             continue
     
     return base_product_ids
 
+def get_variation_ids_from_price_table_record_ids(price_record_ids):
+    """
+    Get variation_ids from Price table record IDs.
+    Price table dan barcha ma'lumotlarni oladi, keyin ProductIDs modeldan variation_id bilan check qiladi.
+    
+    Args:
+        price_record_ids: List of Price table record IDs (from application fields.products)
+    
+    Returns:
+        List of variation_ids from ProductIDs model (bizning bazadan)
+    """
+    if not price_record_ids:
+        return []
+    
+    try:
+        from apps.v1.order.integrations.advanced_payment_assessment import ISell_PRODUCT_PRICE, get_url
+        import aiohttp
+        import asyncio
+        
+        if not ISell_PRODUCT_PRICE:
+            return []
+        
+        url = get_url(ISell_PRODUCT_PRICE)
+        
+        async def fetch_price_data_async(session, url):
+            try:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        return None
+            except Exception:
+                return None
+        
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                data = await fetch_price_data_async(session, url)
+                return data
+        
+        data = asyncio.run(fetch())
+        
+        if not data:
+            return []
+        
+        records = data.get("records", [])
+        
+        price_record_ids_set = set(str(p) for p in price_record_ids if p)
+        
+        variation_ids_from_price = []
+        for record in records:
+            record_id = str(record.get("id"))
+            if record_id in price_record_ids_set:
+                fields = record.get("fields", {})
+                variation_id = fields.get("variation_id")
+                
+                if variation_id:
+                    variation_ids_from_price.append(str(variation_id))
+        
+        variation_ids_from_db = []
+        for variation_id_str in variation_ids_from_price:
+            product_id_obj = ProductIDs.objects.filter(variation_id=str(variation_id_str)).first()
+            
+            if product_id_obj:
+                variation_ids_from_db.append(str(variation_id_str))
+        
+        return variation_ids_from_db
+        
+    except Exception:
+        return []
+
+def get_product_names_and_variation_ids_from_price_table_record_ids(price_record_ids):
+    """
+    Get product names and variation_ids from Price table record IDs.
+    1. Price table dan product_id ni oladi
+    2. ISell_PRODUCTS (Grist) dan product name ni oladi
+    3. ProductIDs modeldan product__name va variation_id bilan check qiladi
+    
+    Args:
+        price_record_ids: List of Price table record IDs (from application fields.products)
+    
+    Returns:
+        List of tuples: [(product_name, variation_id), ...]
+    """
+    if not price_record_ids:
+        return []
+    
+    try:
+        from apps.v1.order.integrations.advanced_payment_assessment import ISell_PRODUCT_PRICE, ISell_PRODUCTS, get_url
+        from apps.v1.order.integrations.advanced_payment_assessment import headers as grist_headers
+        import aiohttp
+        import asyncio
+        
+        if not ISell_PRODUCT_PRICE:
+            return []
+        
+        if not ISell_PRODUCTS:
+            return []
+        
+        price_url = get_url(ISell_PRODUCT_PRICE)
+        
+        price_record_ids_int = [int(p) for p in price_record_ids if p and str(p).isdigit()]
+        
+        if not price_record_ids_int:
+            return []
+        
+        async def fetch_price_data_async(session, url, headers):
+            try:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        return None
+            except Exception:
+                return None
+        
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                data = await fetch_price_data_async(session, price_url, grist_headers)
+                return data
+        
+        price_data = asyncio.run(fetch())
+        
+        if not price_data:
+            return []
+        
+        price_records = price_data.get("records", [])
+        
+        price_record_ids_set = set(price_record_ids_int)
+        
+        price_table_ids = []
+        variation_ids_from_price = {}
+        for record in price_records:
+            record_id = record.get("id")
+            fields = record.get("fields", {})
+            product_id = fields.get("product_id")
+            variation_id = fields.get("variation_id") or ""
+            
+            if product_id in price_record_ids_set:
+                price_table_ids.append(record_id)
+                variation_ids_from_price[record_id] = variation_id
+        
+        if not price_table_ids:
+            return []
+        
+        result = []
+        for price_table_id in price_table_ids:
+            variation_id_from_price = variation_ids_from_price.get(price_table_id, "")
+            
+            product_id_obj = ProductIDs.objects.filter(
+                grist_product_id=str(price_table_id),
+                variation_id=str(variation_id_from_price) if variation_id_from_price else ""
+            ).first()
+            
+            if product_id_obj:
+                product_name = product_id_obj.product.name if product_id_obj.product else ""
+                variation_id = product_id_obj.variation_id or ""
+                result.append((product_name, variation_id))
+        
+        return result
+        
+    except Exception:
+        return []
+
 def compare_application_products_with_request(application, product_list):
     """
     Compare products from application with products from request.
-    Faqat asosiy product_id larni solishtiradi (variation_id ni hisobga olmaydi).
-    Agar bir xil product bo'lsa (lekin boshqa variation_id bilan), True qaytaradi.
+    Avval product name bilan, keyin variation_id bilan solishtiradi.
     
     Args:
-        application: Application record from Grist (has fields.products which are Price table product_ids)
+        application: Application record from Grist (has fields.products which are Price table record IDs)
         product_list: List of products from request (has product_id and variation_id)
     
     Returns:
-        True if base products match (ignoring variation_id), False otherwise
+        True if products match (product name va variation_id), False otherwise
     """
     if not application or not product_list:
         return False
     
     try:
-        app_products = application.get('fields', {}).get('products', [])
+        app_products_raw = application.get('fields', {}).get('products', [])
+        
+        app_products = app_products_raw
         
         if isinstance(app_products, list) and len(app_products) > 0 and app_products[0] == "L":
             app_products = app_products[1:] if len(app_products) > 1 else []
@@ -819,15 +986,33 @@ def compare_application_products_with_request(application, product_list):
         if not app_products:
             return False
         
-        app_base_product_ids = get_base_product_ids_from_price_product_ids(app_products)
-        request_base_product_ids = [item.get('product_id') for item in product_list if item.get('product_id')]
+        app_product_data = get_product_names_and_variation_ids_from_price_table_record_ids(app_products)
         
-        app_base_set = set(int(p) for p in app_base_product_ids if p)
-        request_base_set = set(int(p) for p in request_base_product_ids if p)
+        request_product_data = []
+        for item in product_list:
+            product_id = item.get('product_id')
+            variation_id = item.get('variation_id', '')
+            
+            if not product_id:
+                continue
+            
+            try:
+                product = Products.objects.filter(id=product_id).first()
+                if product:
+                    product_name = product.name or ""
+                    request_product_data.append((product_name, str(variation_id) if variation_id else ""))
+            except Exception:
+                pass
         
-        return app_base_set == request_base_set
+        request_product_set = set(request_product_data)
+        app_product_set = set(app_product_data)
         
-    except Exception as e:
+        if request_product_set.issubset(app_product_set) and len(request_product_set) > 0:
+            return True
+        
+        return False
+        
+    except Exception:
         return False
 
 def get_risk_category_id_from_applications(applications, counterparty_id):
@@ -1357,6 +1542,24 @@ class CalculatePaymentScheduleView(APIView):
                             
                             if latest_stage in ['New', 'Assessment']:
                                 pass
+                            elif latest_stage == 'Denied by client':
+                                application_status = 'Denied by client'
+                                ability_to_order = False
+                            elif latest_stage == 'Denied':
+                                denied_app = latest_app
+                                denied_date = denied_app.get('fields', {}).get('date', 0)
+                                
+                                if denied_date:
+                                    denied_datetime = datetime.fromtimestamp(denied_date)
+                                    current_datetime = datetime.now()
+                                    days_passed = (current_datetime - denied_datetime).days
+                                    
+                                    if days_passed < 30:
+                                        application_status = 'Denied'
+                                        ability_to_order = False
+                                else:
+                                    application_status = 'Denied'
+                                    ability_to_order = False
                             elif latest_stage == 'Accepted':
                                 today_app = get_today_application_by_counterparty(applications, counterparty_id)
                                 
@@ -1388,37 +1591,7 @@ class CalculatePaymentScheduleView(APIView):
                                             if result:
                                                 application_status = 'New'
                                                 minimum_contribution = 0
-                                        except Exception as e:
-                                            pass
-                                elif today_app and today_app.get('fields', {}).get('stage', '') == 'Accepted':
-                                    products_match = compare_application_products_with_request(today_app, product_list)
-                                    
-                                    if products_match:
-                                        application_status = 'Accepted'
-                                    else:
-                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                        
-                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                        
-                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                        
-                                        try:
-                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                            
-                                            result = post_to_grist_application(
-                                                counterparty_id=counterparty_id,
-                                                date=current_date_str,
-                                                stage='New',
-                                                risk_category_id=risk_category_id,
-                                                issue_limit=float(total_down_payment),
-                                                products=product_ids_for_application
-                                            )
-                                            
-                                            if result:
-                                                application_status = 'New'
-                                                minimum_contribution = 0
-                                        except Exception as e:
+                                        except Exception:
                                             pass
                                 else:
                                     products_match = compare_application_products_with_request(latest_app, product_list)
@@ -1448,63 +1621,66 @@ class CalculatePaymentScheduleView(APIView):
                                             if result:
                                                 application_status = 'New'
                                                 minimum_contribution = 0
-                                        except Exception as e:
+                                        except Exception:
                                             pass
                             
-                            elif latest_stage == 'Success':
-                                grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                
-                                from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                
-                                risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                
-                                try:
-                                    current_date_str = datetime.now().strftime("%Y-%m-%d")
+                            if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
+                                if latest_stage == 'Success':
+                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
                                     
-                                    result = post_to_grist_application(
-                                        counterparty_id=counterparty_id,
-                                        date=current_date_str,
-                                        stage='New',
-                                        risk_category_id=risk_category_id,
-                                        issue_limit=float(total_down_payment),
-                                        products=product_ids_for_application
-                                    )
+                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
                                     
-                                    if result:
-                                        application_status = 'New'
-                                        minimum_contribution = 0
-                                except Exception as e:
-                                    pass
+                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                    
+                                    try:
+                                        current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                        
+                                        result = post_to_grist_application(
+                                            counterparty_id=counterparty_id,
+                                            date=current_date_str,
+                                            stage='New',
+                                            risk_category_id=risk_category_id,
+                                            issue_limit=float(total_down_payment),
+                                            products=product_ids_for_application
+                                        )
+                                        
+                                        if result:
+                                            application_status = 'New'
+                                            minimum_contribution = 0
+                                    except Exception:
+                                        pass
+                                
+                                if application_status != 'Accepted' and application_status != 'New':
+                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    
+                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    
+                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                    
+                                    try:
+                                        current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                        
+                                        result = post_to_grist_application(
+                                            counterparty_id=counterparty_id,
+                                            date=current_date_str,
+                                            stage='New',
+                                            risk_category_id=risk_category_id,
+                                            issue_limit=float(total_down_payment),
+                                            products=product_ids_for_application
+                                        )
+                                        
+                                        if result:
+                                            application_status = 'New'
+                                    except Exception:
+                                        pass
+                            
+                            if application_status != 'Accepted':
+                                minimum_contribution = 0
                         else:
-                            grist_product_ids = get_grist_product_ids_from_request(product_list)
-                            
-                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                            
-                            risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                            
-                            try:
-                                current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                
-                                result = post_to_grist_application(
-                                    counterparty_id=counterparty_id,
-                                    date=current_date_str,
-                                    stage='New',
-                                    risk_category_id=risk_category_id,
-                                    issue_limit=float(total_down_payment),
-                                    products=product_ids_for_application
-                                )
-                                
-                                if result:
-                                    application_status = 'New'
-                            except Exception as e:
-                                pass
-                            
+                            application_status = None
                             minimum_contribution = 0
-                    else:
-                        application_status = None
-                        minimum_contribution = 0
                 except Exception as e:
                     minimum_contribution = 0
                     application_status = None
@@ -1833,7 +2009,7 @@ class CalculatePaymentScheduleView(APIView):
                                 products_match = compare_application_products_with_request(today_app, product_list)
                                 
                                 if products_match:
-                                    pass
+                                    application_status = 'Accepted'
                                 else:
                                     grist_product_ids = get_grist_product_ids_from_request(product_list)
                                     
@@ -1973,6 +2149,28 @@ class CalculatePaymentScheduleView(APIView):
                             elif latest_stage in ['Assessment', 'New']:
                                 minimum_contribution = 0
                             
+                            if latest_stage == 'Denied by client':
+                                application_status = 'Denied by client'
+                                ability_to_order = False
+                                should_create_application = False
+                            elif latest_stage == 'Denied':
+                                denied_app = latest_app
+                                denied_date = denied_app.get('fields', {}).get('date', 0)
+                                
+                                if denied_date:
+                                    denied_datetime = datetime.fromtimestamp(denied_date)
+                                    current_datetime = datetime.now()
+                                    days_passed = (current_datetime - denied_datetime).days
+                                    
+                                    if days_passed < 30:
+                                        application_status = 'Denied'
+                                        ability_to_order = False
+                                        should_create_application = False
+                                else:
+                                    application_status = 'Denied'
+                                    ability_to_order = False
+                                    should_create_application = False
+                            
                             if should_create_application:
                                 if latest_stage == 'Accepted':
                                     today_app = get_today_application_by_counterparty(applications, counterparty_id)
@@ -2005,7 +2203,7 @@ class CalculatePaymentScheduleView(APIView):
                                                 
                                                 if result:
                                                     application_status = 'New'
-                                            except Exception as e:
+                                            except Exception:
                                                 pass
                                     else:
                                         products_match = compare_application_products_with_request(latest_app, product_list)
@@ -2035,59 +2233,62 @@ class CalculatePaymentScheduleView(APIView):
                                                 
                                                 if result:
                                                     application_status = 'New'
-                                            except Exception as e:
+                                            except Exception:
                                                 pass
-                                elif latest_stage == 'Success':
-                                    try:
-                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
-                                        
-                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                                        
-                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                                        current_date_str = datetime.now().strftime("%Y-%m-%d")
-                                        
-                                        total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
-                                        
-                                        result = post_to_grist_application(
-                                            counterparty_id=counterparty_id,
-                                            date=current_date_str,
-                                            stage='New',
-                                            risk_category_id=risk_category_id,
-                                            issue_limit=float(total_advance_payment_mode2),
-                                            products=product_ids_for_application
-                                        )
-                                        
-                                        if result:
-                                            application_status = 'New'
-                                    except Exception as e:
-                                        pass
+                                    
+                                if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
+                                    if latest_stage == 'Success':
+                                        try:
+                                            grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                            
+                                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                            
+                                            risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                            current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                            
+                                            total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                            
+                                            result = post_to_grist_application(
+                                                counterparty_id=counterparty_id,
+                                                date=current_date_str,
+                                                stage='New',
+                                                risk_category_id=risk_category_id,
+                                                issue_limit=float(total_advance_payment_mode2),
+                                                products=product_ids_for_application
+                                            )
+                                            
+                                            if result:
+                                                application_status = 'New'
+                                        except Exception as e:
+                                            pass
                         else:
-                            grist_product_ids = get_grist_product_ids_from_request(product_list)
-                            
-                            from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                            product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
-                            
-                            risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
-                            
-                            try:
-                                current_date_str = datetime.now().strftime("%Y-%m-%d")
+                            if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
+                                grist_product_ids = get_grist_product_ids_from_request(product_list)
                                 
-                                total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
                                 
-                                result = post_to_grist_application(
-                                    counterparty_id=counterparty_id,
-                                    date=current_date_str,
-                                    stage='New',
-                                    risk_category_id=risk_category_id,
-                                    issue_limit=float(total_advance_payment_mode2),
-                                    products=product_ids_for_application
-                                )
+                                risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                 
-                                if result:
-                                    application_status = 'New'
-                            except Exception as e:
-                                pass
+                                try:
+                                    current_date_str = datetime.now().strftime("%Y-%m-%d")
+                                    
+                                    total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
+                                    
+                                    result = post_to_grist_application(
+                                        counterparty_id=counterparty_id,
+                                        date=current_date_str,
+                                        stage='New',
+                                        risk_category_id=risk_category_id,
+                                        issue_limit=float(total_advance_payment_mode2),
+                                        products=product_ids_for_application
+                                    )
+                                    
+                                    if result:
+                                        application_status = 'New'
+                                except Exception as e:
+                                    pass
                             
                             minimum_contribution = 0
                 except Exception:
