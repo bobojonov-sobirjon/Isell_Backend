@@ -816,15 +816,23 @@ class MyOrdersView(APIView):
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
-        # Step 5: SALES_PRODUCTS va TRANSACTIONS ni olish
-        from concurrent.futures import ThreadPoolExecutor
+        # Step 5: SALES_PRODUCTS va TRANSACTIONS ni parallel olish (asyncio.gather bilan)
+        import asyncio
+        import aiohttp
+        from apps.v1.order.integrations.my_orders import (
+            fetch_sales_products_data_async,
+            fetch_transactions_data_async
+        )
         
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            sales_products_future = executor.submit(get_sales_products_by_sale_ids, all_sale_ids)
-            transactions_future = executor.submit(get_transactions_by_sale_ids, all_sale_ids)
-            
-            all_sales_products = sales_products_future.result()
-            all_transactions = transactions_future.result()
+        async def fetch_all_data():
+            async with aiohttp.ClientSession() as session:
+                task1 = fetch_sales_products_data_async(session, all_sale_ids)
+                task2 = fetch_transactions_data_async(session, all_sale_ids)
+                
+                all_sales_products, all_transactions = await asyncio.gather(task1, task2)
+                return all_sales_products, all_transactions
+        
+        all_sales_products, all_transactions = asyncio.run(fetch_all_data())
         
         # Step 6: Sales products'ni sale_id bo'yicha guruhlash
         sales_products_by_sale = group_sales_products_by_sale_id(all_sales_products)

@@ -96,20 +96,14 @@ def get_transactions_by_counterparty_id(counterparty_id):
         logger.error(f"[get_transactions_by_counterparty_id] Exception for counterparty_id {counterparty_id}: {str(e)}", exc_info=True)
         return []
 
-def get_sales_directly_by_counterparty_id(counterparty_id):
-    """Get sales directly from ISell_SALES filtered by counterparty_id"""
+async def fetch_sales_data_async(session, counterparty_id):
+    """Async function to fetch sales data"""
     if not ISell_SALES or not counterparty_id:
         return []
     
     try:
         url = get_url(ISell_SALES)
-        
-        async def fetch():
-            async with aiohttp.ClientSession() as session:
-                data = await fetch_api_data_async(session, url)
-                return data
-        
-        data = asyncio.run(fetch())
+        data = await fetch_api_data_async(session, url)
         
         if not data:
             return []
@@ -129,6 +123,21 @@ def get_sales_directly_by_counterparty_id(counterparty_id):
         
         return filtered_sales
         
+    except Exception as e:
+        logger.error(f"[fetch_sales_data_async] Exception: {str(e)}", exc_info=True)
+        return []
+
+def get_sales_directly_by_counterparty_id(counterparty_id):
+    """Get sales directly from ISell_SALES filtered by counterparty_id"""
+    if not ISell_SALES or not counterparty_id:
+        return []
+    
+    try:
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                return await fetch_sales_data_async(session, counterparty_id)
+        
+        return asyncio.run(fetch())
     except Exception as e:
         logger.error(f"[get_sales_directly_by_counterparty_id] Exception: {str(e)}", exc_info=True)
         return []
@@ -173,20 +182,14 @@ def get_sales_by_sale_ids_and_counterparty(sale_ids, counterparty_id):
         logger.error(f"[get_sales_by_sale_ids_and_counterparty] Exception: {str(e)}", exc_info=True)
         return []
 
-def get_sales_products_by_sale_ids(sale_ids):
-    """Get sales products from ISell_SALES_PRODUCTS filtered by sale_ids"""
+async def fetch_sales_products_data_async(session, sale_ids):
+    """Async function to fetch sales products data"""
     if not ISell_SALES_PRODUCTS or not sale_ids:
         return []
     
     try:
         url = get_url(ISell_SALES_PRODUCTS)
-        
-        async def fetch():
-            async with aiohttp.ClientSession() as session:
-                data = await fetch_api_data_async(session, url)
-                return data
-        
-        data = asyncio.run(fetch())
+        data = await fetch_api_data_async(session, url)
         
         if not data:
             return []
@@ -203,6 +206,22 @@ def get_sales_products_by_sale_ids(sale_ids):
                 filtered_products.append(record)
         
         return filtered_products
+        
+    except Exception as e:
+        logger.error(f"[fetch_sales_products_data_async] Exception: {str(e)}", exc_info=True)
+        return []
+
+def get_sales_products_by_sale_ids(sale_ids):
+    """Get sales products from ISell_SALES_PRODUCTS filtered by sale_ids"""
+    if not ISell_SALES_PRODUCTS or not sale_ids:
+        return []
+    
+    try:
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                return await fetch_sales_products_data_async(session, sale_ids)
+        
+        return asyncio.run(fetch())
         
     except Exception as e:
         logger.error(f"[get_sales_products_by_sale_ids] Exception: {str(e)}", exc_info=True)
@@ -232,20 +251,14 @@ def get_product_price_data():
         logger.error(f"[get_product_price_data] Exception: {str(e)}", exc_info=True)
         return []
 
-def get_transactions_by_sale_ids(sale_ids):
-    """Get transactions from ISell_TRANSACTIONS filtered by sale_ids"""
+async def fetch_transactions_data_async(session, sale_ids):
+    """Async function to fetch transactions data"""
     if not ISell_TRANSACTIONS or not sale_ids:
         return []
     
     try:
         url = get_url(ISell_TRANSACTIONS)
-        
-        async def fetch():
-            async with aiohttp.ClientSession() as session:
-                data = await fetch_api_data_async(session, url)
-                return data
-        
-        data = asyncio.run(fetch())
+        data = await fetch_api_data_async(session, url)
         
         if not data:
             return []
@@ -264,9 +277,38 @@ def get_transactions_by_sale_ids(sale_ids):
         return filtered_transactions
         
     except Exception as e:
+        logger.error(f"[fetch_transactions_data_async] Exception: {str(e)}", exc_info=True)
+        return []
+
+def get_transactions_by_sale_ids(sale_ids):
+    """Get transactions from ISell_TRANSACTIONS filtered by sale_ids"""
+    if not ISell_TRANSACTIONS or not sale_ids:
+        return []
+    
+    try:
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                return await fetch_transactions_data_async(session, sale_ids)
+        
+        return asyncio.run(fetch())
+        
+    except Exception as e:
         logger.error(f"[get_transactions_by_sale_ids] Exception: {str(e)}", exc_info=True)
         return []
 
+
+async def fetch_counterparties_data_async(session):
+    """Async function to fetch counterparties data"""
+    if not ISell_COUNTERPARTIES:
+        return None
+    
+    try:
+        url = get_url(ISell_COUNTERPARTIES)
+        data = await fetch_api_data_async(session, url)
+        return data
+    except Exception as e:
+        logger.error(f"[fetch_counterparties_data_async] Exception: {str(e)}", exc_info=True)
+        return None
 
 def get_counterparty_id_by_pinfl_and_birthdate(pinfl, date_of_birth):
     """Get counterparty_id from ISell_COUNTERPARTIES by PINFL only (date_of_birth is ignored)"""
@@ -274,11 +316,9 @@ def get_counterparty_id_by_pinfl_and_birthdate(pinfl, date_of_birth):
         return None
     
     try:
-        url = get_url(ISell_COUNTERPARTIES)
-        
         async def fetch():
             async with aiohttp.ClientSession() as session:
-                data = await fetch_api_data_async(session, url)
+                data = await fetch_counterparties_data_async(session)
                 return data
         
         data = asyncio.run(fetch())
