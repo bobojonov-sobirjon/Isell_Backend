@@ -8,6 +8,9 @@ from django.shortcuts import get_object_or_404
 from datetime import datetime, timedelta
 from calendar import monthrange
 from django.db import transaction
+import logging
+
+logger = logging.getLogger(__name__)
 
 from apps.v1.order.integrations.order_list import get_tariffs
 from apps.v1.order.integrations.my_orders import get_all_grist_data_for_counterparties
@@ -772,8 +775,16 @@ class MyOrdersView(APIView):
     def get(self, request):
         user = request.user
         
+        # Step 1: Get orders from database
         orders = Orders.objects.filter(user=user).only('counterparty_id', 'status')
         
+        if not orders.exists():
+            return Response({
+                "active_sales": [],
+                "completed_sales": []
+            }, status=status.HTTP_200_OK)
+        
+        # Step 2: Extract counterparty_ids
         counterparty_ids = extract_counterparty_ids_from_orders(orders)
         
         orders_map = {}
@@ -791,9 +802,17 @@ class MyOrdersView(APIView):
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
-        all_sales, all_sales_products, product_price_data, all_transactions = get_all_grist_data_for_counterparties(
-            list(counterparty_ids)
-        )
+        # Step 3: Get data from GRIST API
+        try:
+            all_sales, all_sales_products, product_price_data, all_transactions = get_all_grist_data_for_counterparties(
+                list(counterparty_ids)
+            )
+        except Exception as e:
+            logger.error(f"[MyOrdersView] Error fetching data from GRIST API: {str(e)}", exc_info=True)
+            return Response({
+                "active_sales": [],
+                "completed_sales": []
+            }, status=status.HTTP_200_OK)
         
         if not all_sales:
             return Response({
@@ -801,12 +820,20 @@ class MyOrdersView(APIView):
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
+        # Step 4: Process data
         product_price_map = build_product_price_map(product_price_data)
         sales_products_by_sale = group_sales_products_by_sale_id(all_sales_products)
         
-        active_sales, completed_sales = separate_active_and_completed_sales(
-            all_sales, sales_products_by_sale, product_price_map, all_transactions, orders_map
-        )
+        try:
+            active_sales, completed_sales = separate_active_and_completed_sales(
+                all_sales, sales_products_by_sale, product_price_map, all_transactions, orders_map
+            )
+        except Exception as e:
+            logger.error(f"[MyOrdersView] Error processing sales data: {str(e)}", exc_info=True)
+            return Response({
+                "active_sales": [],
+                "completed_sales": []
+            }, status=status.HTTP_200_OK)
         
         return Response({
             "active_sales": active_sales,

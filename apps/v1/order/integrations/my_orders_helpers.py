@@ -4,6 +4,9 @@ Optimized for performance and clean code
 """
 from collections import defaultdict
 from apps.v1.product.models import Products, ProductIDs, ProductDetails, ProductImages
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def extract_counterparty_ids_from_orders(orders):
@@ -15,7 +18,8 @@ def extract_counterparty_ids_from_orders(orders):
     for order in orders:
         if order.counterparty_id:
             try:
-                counterparty_ids.add(int(order.counterparty_id))
+                counterparty_id = int(order.counterparty_id)
+                counterparty_ids.add(counterparty_id)
             except (ValueError, TypeError):
                 pass
     return counterparty_ids
@@ -28,8 +32,8 @@ def build_product_price_map(product_price_data):
     Value: {id, product_name, variation_name}
     """
     product_price_map = {}
+    
     for record in product_price_data:
-        record_id = record.get("id")
         fields = record.get("fields", {})
         product_id = fields.get("product_id")
         variation_id = fields.get("variation_id")
@@ -37,10 +41,11 @@ def build_product_price_map(product_price_data):
         if product_id and variation_id:
             key = (product_id, variation_id)
             product_price_map[key] = {
-                "id": record_id,
+                "id": record.get("id"),
                 "product_name": fields.get("product_name"),
                 "variation_name": fields.get("variation_name")
             }
+    
     return product_price_map
 
 
@@ -50,11 +55,13 @@ def group_sales_products_by_sale_id(sales_products):
     Returns defaultdict with sale_id as key and list of products as value
     """
     sales_products_by_sale = defaultdict(list)
+    
     for sp in sales_products:
         fields = sp.get("fields", {})
         sale_id = fields.get("sale_id")
         if sale_id:
             sales_products_by_sale[sale_id].append(sp)
+    
     return sales_products_by_sale
 
 
@@ -439,7 +446,9 @@ def separate_active_and_completed_sales(all_sales, sales_products_by_sale, produ
         
         sale_data = process_sale_data(sale, sale_products, product_price_map, transactions_map, all_transactions, order)
         
-        if sale_data["debet_0"] > 0:
+        debet_0 = sale_data.get("debet_0", 0)
+        
+        if debet_0 > 0:
             active_sales.append(sale_data)
         else:
             completed_sales.append(sale_data)
