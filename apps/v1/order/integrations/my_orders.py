@@ -34,6 +34,7 @@ ISell_TRANSACTIONS = os.getenv('ISell_TRANSACTIONS')
 ISell_SALES = os.getenv('ISell_SALES')
 ISell_SALES_PRODUCTS = os.getenv('ISell_SALES_PRODUCTS')
 ISell_PRODUCT_PRICE = os.getenv('ISell_PRODUCT_PRICE')
+ISell_COUNTERPARTIES = os.getenv('ISell_CONTERPARTIES') or os.getenv('ISell_COUNTERPARTIES')
 
 def get_url(table_name):
     return f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{table_name}/records"
@@ -265,6 +266,41 @@ def get_transactions_by_sale_ids(sale_ids):
     except Exception as e:
         logger.error(f"[get_transactions_by_sale_ids] Exception: {str(e)}", exc_info=True)
         return []
+
+
+def get_counterparty_id_by_pinfl_and_birthdate(pinfl, date_of_birth):
+    """Get counterparty_id from ISell_COUNTERPARTIES by PINFL only (date_of_birth is ignored)"""
+    if not ISell_COUNTERPARTIES or not pinfl:
+        return None
+    
+    try:
+        url = get_url(ISell_COUNTERPARTIES)
+        
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                data = await fetch_api_data_async(session, url)
+                return data
+        
+        data = asyncio.run(fetch())
+        
+        if not data:
+            return None
+        
+        records = data.get("records", [])
+        
+        for record in records:
+            fields = record.get("fields", {})
+            record_pinfl = fields.get("pinfl")
+            
+            # Faqat PINFL ni solishtirish
+            if record_pinfl and str(record_pinfl).strip() == str(pinfl).strip():
+                return record.get("id")
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"[get_counterparty_id_by_pinfl_and_birthdate] Exception: {str(e)}", exc_info=True)
+        return None
 
 
 def get_all_grist_data_for_counterparties(counterparty_ids):

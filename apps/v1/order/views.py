@@ -18,7 +18,7 @@ from apps.v1.order.integrations.my_orders_helpers import (
     extract_counterparty_ids_from_orders,
     build_product_price_map,
     group_sales_products_by_sale_id,
-    separate_active_and_completed_sales
+    separate_active_and_completed_sales_new
 )
 from apps.v1.order.models import Tariffs, Orders, OrderItems, OrderPaymentSchedule, CompanyAddress
 from apps.v1.order.serializers import TariffsSerializer, OrdersSerializer, CompanyAddressSerializer
@@ -775,44 +775,31 @@ class MyOrdersView(APIView):
     def get(self, request):
         user = request.user
         
-        # Step 1: Get orders from database
-        orders = Orders.objects.filter(user=user).only('counterparty_id', 'status')
+        # Step 1: User'dan PINFL va date_of_birth ni olish
+        pinfl = user.pnfl
+        date_of_birth = user.date_of_birth
         
-        if not orders.exists():
+        if not pinfl:
             return Response({
                 "active_sales": [],
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
-        # Step 2: Extract counterparty_ids
-        counterparty_ids = extract_counterparty_ids_from_orders(orders)
+        # Step 2: ISell_COUNTERPARTIES table'dan counterparty_id ni olish
+        from apps.v1.order.integrations.my_orders import get_counterparty_id_by_pinfl_and_birthdate
         
-        orders_map = {}
-        for order in orders:
-            if order.counterparty_id:
-                try:
-                    counterparty_id = int(order.counterparty_id)
-                    orders_map[counterparty_id] = order
-                except (ValueError, TypeError):
-                    pass
+        counterparty_id = get_counterparty_id_by_pinfl_and_birthdate(pinfl, date_of_birth)
         
-        if not counterparty_ids:
+        if not counterparty_id:
             return Response({
                 "active_sales": [],
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
-        # Step 3: Get data from GRIST API
-        try:
-            all_sales, all_sales_products, product_price_data, all_transactions = get_all_grist_data_for_counterparties(
-                list(counterparty_ids)
-            )
-        except Exception as e:
-            logger.error(f"[MyOrdersView] Error fetching data from GRIST API: {str(e)}", exc_info=True)
-            return Response({
-                "active_sales": [],
-                "completed_sales": []
-            }, status=status.HTTP_200_OK)
+        # Step 3: SALES table'dan sale'larni olish
+        from apps.v1.order.integrations.my_orders import get_sales_directly_by_counterparty_id, get_sales_products_by_sale_ids, get_transactions_by_sale_ids
+        
+        all_sales = get_sales_directly_by_counterparty_id(counterparty_id)
         
         if not all_sales:
             return Response({
@@ -820,13 +807,32 @@ class MyOrdersView(APIView):
                 "completed_sales": []
             }, status=status.HTTP_200_OK)
         
-        # Step 4: Process data
-        product_price_map = build_product_price_map(product_price_data)
+        # Step 4: Sale_id'larni yig'ish
+        all_sale_ids = [sale.get("id") for sale in all_sales if sale.get("id")]
+        
+        if not all_sale_ids:
+            return Response({
+                "active_sales": [],
+                "completed_sales": []
+            }, status=status.HTTP_200_OK)
+        
+        # Step 5: SALES_PRODUCTS va TRANSACTIONS ni olish
+        from concurrent.futures import ThreadPoolExecutor
+        
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            sales_products_future = executor.submit(get_sales_products_by_sale_ids, all_sale_ids)
+            transactions_future = executor.submit(get_transactions_by_sale_ids, all_sale_ids)
+            
+            all_sales_products = sales_products_future.result()
+            all_transactions = transactions_future.result()
+        
+        # Step 6: Sales products'ni sale_id bo'yicha guruhlash
         sales_products_by_sale = group_sales_products_by_sale_id(all_sales_products)
         
+        # Step 7: Har bir sale uchun, har bir product uchun alohida object yaratish
         try:
-            active_sales, completed_sales = separate_active_and_completed_sales(
-                all_sales, sales_products_by_sale, product_price_map, all_transactions, orders_map
+            active_sales, completed_sales = separate_active_and_completed_sales_new(
+                all_sales, sales_products_by_sale, all_transactions
             )
         except Exception as e:
             logger.error(f"[MyOrdersView] Error processing sales data: {str(e)}", exc_info=True)
