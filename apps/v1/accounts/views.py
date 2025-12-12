@@ -1220,7 +1220,7 @@ def post_to_grist_counterparties(first_name, last_name, middle_name, pinfl,
         "Accept": "application/json"
     }
     
-    full_name = f"{first_name} {middle_name} {last_name}".strip() if middle_name else f"{first_name} {last_name}".strip()
+    full_name = f"{first_name} {last_name} {middle_name} ".strip() if middle_name else f"{first_name} {last_name}".strip()
     
     formatted_phone = phone_number or ""
     if formatted_phone:
