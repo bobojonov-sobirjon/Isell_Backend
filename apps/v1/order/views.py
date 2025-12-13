@@ -741,16 +741,16 @@ class UpdateOrderAddressView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class MyOrdersView(APIView):
+class MySalesView(APIView):
     """
-    API to get user's orders (active and completed sales)
+    API to get user's sales (active and completed sales from Grist)
     """
     permission_classes = [IsAuthenticated]
     
     @swagger_auto_schema(
         tags=['Мои продажи'],
-        operation_summary="Мои заказы",
-        operation_description="Получить список активных и завершенных заказов пользователя",
+        operation_summary="Мои продажи",
+        operation_description="Получить список активных и завершенных продаж пользователя из Grist",
         responses={
             200: openapi.Response(
                 description="Список заказов",
@@ -843,7 +843,7 @@ class MyOrdersView(APIView):
                 all_sales, sales_products_by_sale, all_transactions, request
             )
         except Exception as e:
-            logger.error(f"[MyOrdersView] Error processing sales data: {str(e)}", exc_info=True)
+            logger.error(f"[MySalesView] Error processing sales data: {str(e)}", exc_info=True)
             return Response({
                 "active_sales": [],
                 "completed_sales": []
@@ -853,3 +853,80 @@ class MyOrdersView(APIView):
             "active_sales": active_sales,
             "completed_sales": completed_sales
         }, status=status.HTTP_200_OK)
+
+
+class MyOrdersView(APIView):
+    """
+    API to get user's orders from Order table (status != FINISHED)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        tags=['Заказы'],
+        operation_summary="Мои заказы",
+        operation_description="Получить список активных заказов пользователя из Order table (status != FINISHED)",
+        responses={
+            200: openapi.Response(
+                description="Список заказов",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(type=openapi.TYPE_OBJECT)
+                )
+            )
+        }
+    )
+    def get(self, request):
+        user = request.user
+        
+        # Order table'dan status FINISHED bo'lmagan order'larni olish
+        orders = Orders.objects.filter(
+            user=user
+        ).exclude(
+            status=Orders.Status.FINISHED
+        ).prefetch_related(
+            'items__product',
+            'items__variation',
+            'items__tariff',
+            'items__payment_schedule',
+            'company_address'
+        ).order_by('-created_at')
+        
+        serializer = OrdersSerializer(orders, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class MyOrderDetailView(APIView):
+    """
+    API to get single order by ID from Order table
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        tags=['Заказы'],
+        operation_summary="Детали заказа",
+        operation_description="Получить детали заказа по ID",
+        responses={
+            200: openapi.Response(
+                description="Детали заказа",
+                schema=openapi.Schema(type=openapi.TYPE_OBJECT)
+            ),
+            404: "Заказ не найден"
+        }
+    )
+    def get(self, request, order_id):
+        user = request.user
+        
+        order = get_object_or_404(
+            Orders.objects.prefetch_related(
+                'items__product',
+                'items__variation',
+                'items__tariff',
+                'items__payment_schedule',
+                'company_address'
+            ),
+            id=order_id,
+            user=user
+        )
+        
+        serializer = OrdersSerializer(order, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
