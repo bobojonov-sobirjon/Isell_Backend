@@ -748,7 +748,7 @@ class MyOrdersView(APIView):
     permission_classes = [IsAuthenticated]
     
     @swagger_auto_schema(
-        tags=['Заказы'],
+        tags=['Мои продажи'],
         operation_summary="Мои заказы",
         operation_description="Получить список активных и завершенных заказов пользователя",
         responses={

@@ -13,7 +13,7 @@ from config.libraries.swagger_auth import SwaggerTokenView
 
 from apps.v1.product.banner_views import BannerListView
 from apps.v1.order.views import CompanyAddressListView
-
+from apps.v1.order.views import MyOrdersView
 
 class CustomOpenAPISchemaGenerator(generators.OpenAPISchemaGenerator):
     """Custom schema generator that adds security definitions"""
@@ -66,7 +66,7 @@ urlpatterns += [
     path('api/v1/product/', include('apps.v1.product.urls')),
     path('api/v1/accounts/', include('apps.v1.accounts.urls')),
     path('api/v1/order/', include('apps.v1.order.urls')),
-
+    path('api/v1/sales/my-sales', MyOrdersView.as_view(), name='my_orders'),
 ]
 
 urlpatterns += [

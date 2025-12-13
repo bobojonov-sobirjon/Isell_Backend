@@ -12,5 +12,4 @@ from apps.v1.order.views import (
 urlpatterns = [
     path('create/', CreateOrderView.as_view(), name='create_order'),
     path('update-address/', UpdateOrderAddressView.as_view(), name='update_order_address'),
-    path('my-orders/', MyOrdersView.as_view(), name='my_orders'),
 ]
