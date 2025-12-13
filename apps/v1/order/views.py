@@ -840,7 +840,7 @@ class MyOrdersView(APIView):
         # Step 7: Har bir sale uchun, har bir product uchun alohida object yaratish
         try:
             active_sales, completed_sales = separate_active_and_completed_sales_new(
-                all_sales, sales_products_by_sale, all_transactions
+                all_sales, sales_products_by_sale, all_transactions, request
             )
         except Exception as e:
             logger.error(f"[MyOrdersView] Error processing sales data: {str(e)}", exc_info=True)

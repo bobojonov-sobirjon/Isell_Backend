@@ -116,7 +116,7 @@ def process_transactions_for_sale_products(sale_products, all_transactions):
     return transactions_map
 
 
-def process_sale_product_by_variation_id(sale_product, transactions_map=None, all_transactions=None):
+def process_sale_product_by_variation_id(sale_product, transactions_map=None, all_transactions=None, request=None):
     """
     Process a single sale product by variation_id from SALES_PRODUCTS
     Returns product data and variation data
@@ -144,13 +144,20 @@ def process_sale_product_by_variation_id(sale_product, transactions_map=None, al
     product = product_id_obj.product
     
     # Product data
+    product_image_url = None
+    if product.image:
+        if request:
+            product_image_url = request.build_absolute_uri(product.image.url)
+        else:
+            product_image_url = product.image.url
+    
     product_data = {
         "id": product.id,
         "name": product.name or "",
         "price": float(product.price) if product.price else 0,
         "price_category": product.price_category or "",
         "actual": product.actual,
-        "image": product.image.url if product.image else None,
+        "image": product_image_url,
         "category": {
             "id": product.category.id if product.category else None,
             "name": product.category.name if product.category else ""
@@ -223,7 +230,7 @@ def process_sale_product_by_variation_id(sale_product, transactions_map=None, al
         for image in images_for_detail:
             image_data = {
                 "id": image.id,
-                "image": image.image.url if image.image else None
+                "image": request.build_absolute_uri(image.image.url) if image.image and request else (image.image.url if image.image else None)
             }
             product_images_list.append(image_data)
         
@@ -290,12 +297,14 @@ def process_fact_planned_transactions(fact_planned_transactions):
     return processed_transactions
 
 
-def process_sale_data_for_single_product(sale, sale_product, transactions_map=None, all_transactions=None):
+def process_sale_data_with_all_variations(sale, sale_products, transactions_map=None, all_transactions=None, request=None):
     """
-    Process a single sale and single product, return sale data for one product
-    Har bir product uchun alohida object yaratish
+    Process a single sale with all its products/variations
+    Bir sales_id ga tegishli barcha product'lar bitta object ichida variation_list sifatida to'planadi
+    Agar bir nechta turli product bo'lsa, har bir product uchun alohida product_data yaratiladi
     """
     from datetime import datetime
+    from collections import defaultdict
     
     sale_id = sale.get("id")
     fields = sale.get("fields", {})
@@ -303,15 +312,43 @@ def process_sale_data_for_single_product(sale, sale_product, transactions_map=No
     # Sale ma'lumotlari
     total = fields.get("total", 0) or 0
     remainder = fields.get("reminder", 0) or 0
+    advance_corrected = fields.get("advance_corrected", 0) or 0
     paid = fields.get("paid", 0) or 0
     debet_0 = fields.get("debet_0", 0) or 0
     fact_planned_transactions = fields.get("fact_planned_transactions", [])
     
-    # Product va variation ma'lumotlarini olish
-    product_data, variation_data = process_sale_product_by_variation_id(sale_product, transactions_map, all_transactions)
+    # Product'larni product_id bo'yicha guruhlash
+    products_by_id = defaultdict(list)
     
-    if not product_data or not variation_data:
+    for sale_product in sale_products:
+        product_data_item, variation_data = process_sale_product_by_variation_id(sale_product, transactions_map, all_transactions, request)
+        
+        if not product_data_item or not variation_data:
+            continue
+        
+        product_id = product_data_item.get("id")
+        products_by_id[product_id].append({
+            "product_data": product_data_item,
+            "variation": variation_data
+        })
+    
+    if not products_by_id:
         return None
+    
+    # Har bir product uchun product_data yaratish
+    product_data_list = []
+    
+    for product_id, product_items in products_by_id.items():
+        # Birinchi item'dan product ma'lumotlarini olish (barcha bir xil)
+        product_data = product_items[0]["product_data"]
+        
+        # Barcha variation'larni to'plash
+        variation_list = [item["variation"] for item in product_items]
+        
+        product_data_list.append({
+            "product": product_data,
+            "variation_list": variation_list
+        })
     
     # Sale transactions
     sale_transactions = []
@@ -339,12 +376,12 @@ def process_sale_data_for_single_product(sale, sale_product, transactions_map=No
     
     processed_transactions = process_fact_planned_transactions(fact_planned_transactions)
     
-    # Sale data yaratish (har bir product uchun alohida)
+    # Sale data yaratish (barcha product'lar bilan)
     sale_data = {
-        "product": product_data,
-        "variation_list": [variation_data],  # Bir nechta bo'lishi mumkin, lekin hozir bitta
+        "product_data": product_data_list,  # Barcha product'lar ro'yxati
         "total": float(total) if total else 0,
         "remainder": float(remainder) if remainder else 0,
+        "advance_corrected": float(advance_corrected) if advance_corrected else 0,
         "paid": float(paid) if paid else 0,
         "debet_0": float(debet_0) if debet_0 else 0,
         "transactions": sale_transactions,
@@ -355,10 +392,10 @@ def process_sale_data_for_single_product(sale, sale_product, transactions_map=No
     return sale_data
 
 
-def separate_active_and_completed_sales_new(all_sales, sales_products_by_sale, all_transactions):
+def separate_active_and_completed_sales_new(all_sales, sales_products_by_sale, all_transactions, request=None):
     """
     Process all sales and separate into active and completed
-    Har bir sale uchun, agar bir nechta product bo'lsa, har bir product uchun alohida object yaratish
+    Bir sales_id ga tegishli barcha product'lar bitta object ichida variation_list sifatida to'planadi
     Returns (active_sales, completed_sales)
     """
     all_sale_products = []
@@ -374,19 +411,21 @@ def separate_active_and_completed_sales_new(all_sales, sales_products_by_sale, a
         sale_id = sale.get("id")
         sale_products = sales_products_by_sale.get(sale_id, [])
         
-        # Har bir sale_product uchun alohida object yaratish
-        for sale_product in sale_products:
-            sale_data = process_sale_data_for_single_product(sale, sale_product, transactions_map, all_transactions)
-            
-            if not sale_data:
-                continue
-            
-            debet_0 = sale_data.get("debet_0", 0)
-            
-            if debet_0 > 0:
-                active_sales.append(sale_data)
-            else:
-                completed_sales.append(sale_data)
+        if not sale_products:
+            continue
+        
+        # Bir sales_id ga tegishli barcha product'larni bitta object ichida to'plash
+        sale_data = process_sale_data_with_all_variations(sale, sale_products, transactions_map, all_transactions, request)
+        
+        if not sale_data:
+            continue
+        
+        debet_0 = sale_data.get("debet_0", 0)
+        
+        if debet_0 > 0:
+            active_sales.append(sale_data)
+        else:
+            completed_sales.append(sale_data)
     
     return active_sales, completed_sales
 
