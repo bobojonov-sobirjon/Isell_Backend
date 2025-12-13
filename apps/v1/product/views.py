@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404
 from datetime import datetime, timedelta
 from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
 
 from apps.v1.product.models import (
     Categories, Products, ProductDetails, ProductIDs,
@@ -21,8 +22,21 @@ from apps.v1.product.models import ProductRiskCategory
 from apps.v1.order.integrations.advanced_payment_assessment import (
     get_application, get_products_in_grist, get_counterparties_in_grist, post_to_grist_application
 )
+from apps.v1.product.constants import (
+    TariffConstants, ApplicationStages, TimeConstants, CalculationModes
+)
+from apps.v1.product.utils.payment_utils import (
+    get_tariff_coefficient_ratio,
+    calculate_monthly_payment_amount,
+    generate_monthly_payments
+)
+from apps.v1.product.utils.detail_matching import match_product_detail, find_matching_detail_price
+from apps.v1.product.services.product_price_service import ProductPriceService
+from apps.v1.product.services.application_service import ApplicationService
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+
+logger = logging.getLogger(__name__)
 
 class ProductPagination(PageNumberPagination):
     page_size = 10
@@ -272,14 +286,7 @@ class ProductDetailView(APIView):
         
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-def get_tariff_coefficient_ratio(tariff):
-    """
-    Calculate tariff coefficient ratio safely, avoiding division by zero.
-    If coefficient or payments_count is 0, use 1 instead.
-    """
-    coefficient = tariff.coefficient if tariff.coefficient and tariff.coefficient > 0 else 1
-    payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
-    return coefficient / payments_count
+# get_tariff_coefficient_ratio moved to apps.v1.product.utils.payment_utils
 
 class CalculateMonthlyPaymentView(APIView):
     """
@@ -364,10 +371,10 @@ class CalculateMonthlyPaymentView(APIView):
         )
         tariff = get_object_or_404(Tariffs, id=installment_period)
         
-        is_no_installment = tariff.name and "No installment" in tariff.name
+        is_no_installment = tariff.name and TariffConstants.NO_INSTALLMENT_KEYWORD in tariff.name
         
+        # Get product price using service
         product_price = None
-        
         if variation_id:
             product_id_obj = ProductIDs.objects.filter(
                 product=product,
@@ -375,45 +382,11 @@ class CalculateMonthlyPaymentView(APIView):
             ).first()
             
             if product_id_obj and product_id_obj.variation_name:
-                variation_name = product_id_obj.variation_name.upper()
-                details = product.details.all()
-                
-                for detail in details:
-                    color = detail.color or ""
-                    storage = detail.storage or ""
-                    sim = detail.sim or ""
-                    
-                    color_match = color.upper() in variation_name if color else False
-                    storage_match = storage.upper() in variation_name if storage else False
-                    
-                    sim_match = False
-                    if sim:
-                        sim_normalized = sim.replace("+", "").replace(" ", "").upper()
-                        if sim.upper() in variation_name:
-                            sim_match = True
-                        elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
-                            sim_match = True
-                        elif "SIM" in sim_normalized and "SIM" in variation_name:
-                            sim_match = True
-                        elif "DUAL" in sim_normalized and "DUAL" in variation_name:
-                            sim_match = True
-                        elif "ESIM" in sim_normalized and "ESIM" in variation_name:
-                            sim_match = True
-                    
-                    if color_match and storage_match and (sim_match if sim else True):
-                        if detail.price is not None:
-                            product_price = float(detail.price)
-                            break
+                product_price = find_matching_detail_price(product, product_id_obj.variation_name)
         
+        # Fallback to product price or minimum detail price
         if product_price is None:
-            if product.price is not None:
-                product_price = float(product.price)
-            else:
-                details = product.details.all()
-                if details.exists():
-                    prices = [float(detail.price) for detail in details if detail.price is not None]
-                    if prices:
-                        product_price = min(prices)
+            product_price = ProductPriceService.get_product_price(product)
         
         if product_price is None:
             return Response(
@@ -421,13 +394,12 @@ class CalculateMonthlyPaymentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Calculate monthly payment
         if is_no_installment:
             monthly_payment = 0
         else:
-            monthly_payment = round(
-                (product_price - float(total_down_payment)) * 
-                get_tariff_coefficient_ratio(tariff)
-            )
+            remaining_amount = max(0, product_price - float(total_down_payment))
+            monthly_payment = calculate_monthly_payment_amount(remaining_amount, tariff)
         
         response_data = [
             {
@@ -614,7 +586,7 @@ def are_all_today_applications_accepted(applications, counterparty_id):
     
     for app in today_apps:
         stage = app.get('fields', {}).get('stage', '')
-        if stage not in ['Accepted', 'Success']:
+        if stage not in [ApplicationStages.ACCEPTED, ApplicationStages.SUCCESS]:
             return False
     
     return True
@@ -1036,7 +1008,7 @@ def get_risk_category_id_from_applications(applications, counterparty_id):
     latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
     if latest_app:
         latest_stage = latest_app.get('fields', {}).get('stage', '')
-        if latest_stage in ['Accepted', 'Success']:
+        if latest_stage in [ApplicationStages.ACCEPTED, ApplicationStages.SUCCESS]:
             risk_category_id = latest_app.get('fields', {}).get('risk_category_id')
             if risk_category_id:
                 return risk_category_id
@@ -1045,7 +1017,7 @@ def get_risk_category_id_from_applications(applications, counterparty_id):
     for app in applications:
         app_counterparty_id = app.get('fields', {}).get('counterparty_id')
         app_stage = app.get('fields', {}).get('stage', '')
-        if app_counterparty_id == counterparty_id and app_stage in ['Accepted', 'Success']:
+        if app_counterparty_id == counterparty_id and app_stage in [ApplicationStages.ACCEPTED, ApplicationStages.SUCCESS]:
             approved_apps.append(app)
     
     if approved_apps:
@@ -1092,7 +1064,7 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
             app_stage = app.get('fields', {}).get('stage', '')
             app_id = app.get('id')
 
-            if app_counterparty_id == counterparty_id and app_stage == 'Accepted':
+            if app_counterparty_id == counterparty_id and app_stage == ApplicationStages.ACCEPTED:
 
                 approved_applications.append(app)
 
@@ -1261,7 +1233,7 @@ def has_accepted_but_not_in_orders(user, applications, counterparty_id, product_
             app_counterparty_id = app.get('fields', {}).get('counterparty_id')
             app_stage = app.get('fields', {}).get('stage', '')
             
-            if app_counterparty_id == counterparty_id and app_stage == 'Accepted':
+            if app_counterparty_id == counterparty_id and app_stage == ApplicationStages.ACCEPTED:
                 # Application'dagi mahsulotlar request'dagi mahsulotlar bilan mos keladimi?
                 app_products_match = compare_application_products_with_request(app, product_list)
                 if app_products_match:
@@ -1442,16 +1414,16 @@ class CalculatePaymentScheduleView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if calculation_mode not in [1, 2]:
+        if calculation_mode not in CalculationModes.VALID_MODES:
             return Response(
-                {"error": "calculation_mode должен быть 1 или 2"},
+                {"error": f"calculation_mode должен быть {CalculationModes.MODE_1} или {CalculationModes.MODE_2}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         monthly_payments = []
         has_application = False
         
-        if calculation_mode == 1:
+        if calculation_mode == CalculationModes.MODE_1:
             total_down_payment = request.data.get('total_advance_payment')
             tariff_id = request.data.get('tariff_id')
             
@@ -1476,7 +1448,7 @@ class CalculatePaymentScheduleView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
-            is_no_installment = tariff.name and "No installment" in tariff.name
+            is_no_installment = tariff.name and TariffConstants.NO_INSTALLMENT_KEYWORD in tariff.name
             
             total_product_sum = 0
             products_data = []
@@ -1628,7 +1600,7 @@ class CalculatePaymentScheduleView(APIView):
                             latest_stage = latest_app.get('fields', {}).get('stage', '')
                             application_status = latest_stage
                             
-                            if latest_stage in ['Accepted', 'Denied']:
+                            if latest_stage in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED]:
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                 if risk_category_id:
                                     price_category_ids = set()
@@ -1678,17 +1650,17 @@ class CalculatePaymentScheduleView(APIView):
                                                         minimum_contribution += contribution
                                             except (ValueError, TypeError):
                                                 pass
-                            elif latest_stage in ['Assessment', 'New']:
+                            elif latest_stage in [ApplicationStages.ASSESSMENT, ApplicationStages.NEW]:
                                 minimum_contribution = 0
-                            elif latest_stage == 'Denied by client':
+                            elif latest_stage == ApplicationStages.DENIED_BY_CLIENT:
                                 minimum_contribution = 0
                             
-                            if latest_stage in ['New', 'Assessment']:
+                            if latest_stage in [ApplicationStages.NEW, ApplicationStages.ASSESSMENT]:
                                 pass
-                            elif latest_stage == 'Denied by client':
-                                application_status = 'Denied by client'
+                            elif latest_stage == ApplicationStages.DENIED_BY_CLIENT:
+                                application_status = ApplicationStages.DENIED_BY_CLIENT
                                 ability_to_order = False
-                            elif latest_stage == 'Denied':
+                            elif latest_stage == ApplicationStages.DENIED:
                                 denied_app = latest_app
                                 denied_date = denied_app.get('fields', {}).get('date', 0)
                                 
@@ -1697,13 +1669,13 @@ class CalculatePaymentScheduleView(APIView):
                                     current_datetime = datetime.now()
                                     days_passed = (current_datetime - denied_datetime).days
                                     
-                                    if days_passed < 30:
-                                        application_status = 'Denied'
+                                    if days_passed < TimeConstants.DENIED_COOLDOWN_DAYS:
+                                        application_status = ApplicationStages.DENIED
                                         ability_to_order = False
                                 else:
-                                    application_status = 'Denied'
+                                    application_status = ApplicationStages.DENIED
                                     ability_to_order = False
-                            elif latest_stage == 'Accepted':
+                            elif latest_stage == ApplicationStages.ACCEPTED:
                                 from django.utils import timezone
                                 import pytz
                                 
@@ -1720,7 +1692,7 @@ class CalculatePaymentScheduleView(APIView):
                                     app_stage = app.get('fields', {}).get('stage', '')
                                     app_date = app.get('fields', {}).get('date')
                                     
-                                    if app_counterparty_id == counterparty_id and app_stage == 'Accepted' and app_date:
+                                    if app_counterparty_id == counterparty_id and app_stage == ApplicationStages.ACCEPTED and app_date:
                                         app_date_timestamp = None
                                         if isinstance(app_date, (int, float)):
                                             app_date_timestamp = int(app_date)
@@ -1746,24 +1718,19 @@ class CalculatePaymentScheduleView(APIView):
                                         break
                                 
                                 if not found_today_accepted:
-                                    # Tekshiruvlar: post qilishni to'xtatadigan holatlar
-                                    should_post = True
+                                    # Check if should post using ApplicationService
+                                    should_post, reason = ApplicationService.should_post_to_grist(
+                                        user=user,
+                                        applications=applications,
+                                        counterparty_id=counterparty_id,
+                                        product_list=product_list
+                                    )
                                     
-                                    # 1. Faol orderlar tekshiruvi
-                                    if has_active_orders(user):
-                                        should_post = False
-                                    
-                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                        should_post = False
-                                    
-                                    # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
-                                    if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
-                                        should_post = False
-                                    
-                                    # 4. Denied 30 kundan kam o'tgan tekshiruvi
-                                    if has_denied_within_30_days(applications, counterparty_id):
-                                        should_post = False
+                                    if not should_post:
+                                        logger.info(f"Application posting blocked: {reason}", extra={
+                                            'user_id': user.id if user else None,
+                                            'counterparty_id': counterparty_id
+                                        })
                                     
                                     if should_post:
                                         grist_product_ids = get_grist_product_ids_from_request(product_list)
@@ -1779,34 +1746,43 @@ class CalculatePaymentScheduleView(APIView):
                                             result = post_to_grist_application(
                                                 counterparty_id=counterparty_id,
                                                 date=current_date_str,
-                                                stage='New',
+                                                stage=ApplicationStages.NEW,
                                                 risk_category_id=risk_category_id,
                                                 issue_limit=float(total_down_payment),
                                                 products=product_ids_for_application
                                             )
                                             
                                             if result:
-                                                application_status = 'New'
+                                                application_status = ApplicationStages.NEW
                                                 minimum_contribution = 0
-                                        except Exception:
-                                            pass
+                                        except ValueError as e:
+                                            logger.warning(f"Invalid value in post_to_grist_application: {e}", extra={
+                                                'user_id': user.id if user else None,
+                                                'counterparty_id': counterparty_id
+                                            })
+                                        except KeyError as e:
+                                            logger.warning(f"Missing key in post_to_grist_application: {e}")
+                                        except Exception as e:
+                                            logger.error(f"Unexpected error in post_to_grist_application: {e}", exc_info=True, extra={
+                                                'user_id': user.id if user else None,
+                                                'counterparty_id': counterparty_id
+                                            })
                             
-                            if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
-                                if latest_stage == 'Success':
+                            if application_status not in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED, ApplicationStages.DENIED_BY_CLIENT]:
+                                if latest_stage == ApplicationStages.SUCCESS:
                                     # Success stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
-                                    should_post = True
+                                    should_post, reason = ApplicationService.should_post_to_grist(
+                                        user=user,
+                                        applications=applications,
+                                        counterparty_id=counterparty_id,
+                                        product_list=product_list
+                                    )
                                     
-                                    # 1. Faol orderlar tekshiruvi
-                                    if has_active_orders(user):
-                                        should_post = False
-                                    
-                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                        should_post = False
-                                    
-                                    # 3. Denied 30 kundan kam o'tgan tekshiruvi
-                                    if has_denied_within_30_days(applications, counterparty_id):
-                                        should_post = False
+                                    if not should_post:
+                                        logger.info(f"Application posting blocked (Success stage): {reason}", extra={
+                                            'user_id': user.id if user else None,
+                                            'counterparty_id': counterparty_id
+                                        })
                                     
                                     if should_post:
                                         grist_product_ids = get_grist_product_ids_from_request(product_list)
@@ -1822,37 +1798,42 @@ class CalculatePaymentScheduleView(APIView):
                                             result = post_to_grist_application(
                                                 counterparty_id=counterparty_id,
                                                 date=current_date_str,
-                                                stage='New',
+                                                stage=ApplicationStages.NEW,
                                                 risk_category_id=risk_category_id,
                                                 issue_limit=float(total_down_payment),
                                                 products=product_ids_for_application
                                             )
                                             
                                             if result:
-                                                application_status = 'New'
+                                                application_status = ApplicationStages.NEW
                                                 minimum_contribution = 0
-                                        except Exception:
-                                            pass
+                                        except ValueError as e:
+                                            logger.warning(f"Invalid value in post_to_grist_application: {e}", extra={
+                                                'user_id': user.id if user else None,
+                                                'counterparty_id': counterparty_id
+                                            })
+                                        except KeyError as e:
+                                            logger.warning(f"Missing key in post_to_grist_application: {e}")
+                                        except Exception as e:
+                                            logger.error(f"Unexpected error in post_to_grist_application: {e}", exc_info=True, extra={
+                                                'user_id': user.id if user else None,
+                                                'counterparty_id': counterparty_id
+                                            })
                                 
-                                if application_status != 'Accepted' and application_status != 'New':
-                                    # Tekshiruvlar: post qilishni to'xtatadigan holatlar
-                                    should_post = True
+                                if application_status not in [ApplicationStages.ACCEPTED, ApplicationStages.NEW]:
+                                    # Check if should post using ApplicationService
+                                    should_post, reason = ApplicationService.should_post_to_grist(
+                                        user=user,
+                                        applications=applications,
+                                        counterparty_id=counterparty_id,
+                                        product_list=product_list
+                                    )
                                     
-                                    # 1. Faol orderlar tekshiruvi
-                                    if has_active_orders(user):
-                                        should_post = False
-                                    
-                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                        should_post = False
-                                    
-                                    # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
-                                    if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
-                                        should_post = False
-                                    
-                                    # 4. Denied 30 kundan kam o'tgan tekshiruvi
-                                    if has_denied_within_30_days(applications, counterparty_id):
-                                        should_post = False
+                                    if not should_post:
+                                        logger.info(f"Application posting blocked: {reason}", extra={
+                                            'user_id': user.id if user else None,
+                                            'counterparty_id': counterparty_id
+                                        })
                                     
                                     if should_post:
                                         grist_product_ids = get_grist_product_ids_from_request(product_list)
@@ -1868,18 +1849,18 @@ class CalculatePaymentScheduleView(APIView):
                                             result = post_to_grist_application(
                                                 counterparty_id=counterparty_id,
                                                 date=current_date_str,
-                                                stage='New',
+                                                stage=ApplicationStages.NEW,
                                                 risk_category_id=risk_category_id,
                                                 issue_limit=float(total_down_payment),
                                                 products=product_ids_for_application
                                             )
                                             
                                             if result:
-                                                application_status = 'New'
+                                                application_status = ApplicationStages.NEW
                                         except Exception:
                                             pass
                             
-                            if application_status != 'Accepted':
+                            if application_status != ApplicationStages.ACCEPTED:
                                 minimum_contribution = 0
                         else:
                             grist_product_ids = get_grist_product_ids_from_request(product_list)
@@ -1915,14 +1896,14 @@ class CalculatePaymentScheduleView(APIView):
                                     result = post_to_grist_application(
                                         counterparty_id=counterparty_id,
                                         date=current_date_str,
-                                        stage='New',
+                                        stage=ApplicationStages.NEW,
                                         risk_category_id=risk_category_id,
                                         issue_limit=float(total_down_payment),
                                         products=product_ids_for_application
                                     )
                                     
                                     if result:
-                                        application_status = 'New'
+                                        application_status = ApplicationStages.NEW
                                 except Exception:
                                     pass
                             
@@ -1931,35 +1912,15 @@ class CalculatePaymentScheduleView(APIView):
                     minimum_contribution = 0
                     application_status = None
             
-            current_date = datetime.now()
-            
+            # Generate monthly payments using utility
             if not is_no_installment and monthly_payment_amount > 0:
-                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
-                for month_num in range(1, safe_payments_count + 1):
-                    year = current_date.year
-                    month = current_date.month + month_num
-                    day = current_date.day
-                    
-                    while month > 12:
-                        month -= 12
-                        year += 1
-                    
-                    max_day = monthrange(year, month)[1]
-                    if day > max_day:
-                        day = max_day
-                    
-                    payment_date = datetime(year, month, day)
-                    
-                    if tariff.offset_days:
-                        payment_date = payment_date + timedelta(days=tariff.offset_days)
-                    
-                    monthly_payments.append({
-                        "number": month_num,
-                        "date": payment_date.strftime("%d/%m/%y"),
-                        "payment": monthly_payment_amount
-                    })
+                monthly_payments = generate_monthly_payments(
+                    tariff=tariff,
+                    total_amount=monthly_payment_amount,
+                    start_date=datetime.now()
+                )
         
-        elif calculation_mode == 2:
+        elif calculation_mode == CalculationModes.MODE_2:
             original_total_product_sum = 0
             total_product_sum = 0
             total_down_payment = 0
@@ -2007,8 +1968,16 @@ class CalculatePaymentScheduleView(APIView):
                     else:
                         has_application = False
                         application_status = None
-                except Exception:
-                    pass
+                except ValueError as e:
+                    logger.warning(f"Invalid value in CalculatePaymentScheduleView mode 2: {e}", extra={
+                        'user_id': user.id if user else None
+                    })
+                except KeyError as e:
+                    logger.warning(f"Missing key in CalculatePaymentScheduleView mode 2: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error in CalculatePaymentScheduleView mode 2: {e}", exc_info=True, extra={
+                        'user_id': user.id if user else None
+                    })
             
             product_ids = [item.get('product_id') for item in product_list if item.get('product_id')]
             products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
@@ -2018,17 +1987,9 @@ class CalculatePaymentScheduleView(APIView):
             tariffs = Tariffs.objects.filter(id__in=tariff_ids)
             tariffs_dict = {t.id: t for t in tariffs}
             
+            # Build variation dict using service
             product_ids_objs_mode2 = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
-            product_ids_dict_mode2 = {}
-            variation_dict_mode2 = {}
-            
-            for pid_obj in product_ids_objs_mode2:
-                if pid_obj.product_id not in product_ids_dict_mode2:
-                    product_ids_dict_mode2[pid_obj.product_id] = []
-                product_ids_dict_mode2[pid_obj.product_id].append(pid_obj)
-                
-                key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
-                variation_dict_mode2[key] = pid_obj
+            variation_dict_mode2, product_ids_dict_mode2 = ProductPriceService.build_variation_dict(product_ids_objs_mode2)
             
             for item in product_list:
                 product_id = item.get('product_id')
@@ -2051,71 +2012,15 @@ class CalculatePaymentScheduleView(APIView):
                 if not tariff:
                     continue
                 
-                is_no_installment = tariff.name and "No installment" in tariff.name
+                is_no_installment = tariff.name and TariffConstants.NO_INSTALLMENT_KEYWORD in tariff.name
                 
-                product_price = None
-                
-                if variation_id:
-                    key = (product_id, str(variation_id))
-                    product_id_obj = variation_dict_mode2.get(key)
-                    if product_id_obj and product_id_obj.variation_name:
-                        variation_name = product_id_obj.variation_name.upper()
-                        details = product.details.all()
-                        
-                        best_match_detail = None
-                        best_match_score = 0
-                        
-                        for detail in details:
-                            color = detail.color or ""
-                            storage = detail.storage or ""
-                            sim = detail.sim or ""
-                            
-                            color_match = color.upper() in variation_name if color else False
-                            storage_match = storage.upper() in variation_name if storage else False
-                            
-                            sim_match = False
-                            if sim:
-                                sim_normalized = sim.replace("+", "").replace(" ", "").upper()
-                                if sim.upper() in variation_name:
-                                    sim_match = True
-                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
-                                    sim_match = True
-                                elif "SIM" in sim_normalized and "SIM" in variation_name:
-                                    sim_match = True
-                                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
-                                    sim_match = True
-                                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
-                                    sim_match = True
-                            
-                            if color_match and storage_match and (sim_match if sim else True):
-                                if detail.price is not None:
-                                    product_price = float(detail.price)
-                                    break
-                            
-                            match_score = 0
-                            if color_match:
-                                match_score += 1
-                            if storage_match:
-                                match_score += 1
-                            if sim_match or not sim:
-                                match_score += 1
-                            
-                            if match_score > best_match_score and detail.price is not None:
-                                best_match_detail = detail
-                                best_match_score = match_score
-                        
-                        if product_price is None and best_match_detail and best_match_detail.price is not None:
-                            product_price = float(best_match_detail.price)
-                
-                if product_price is None:
-                    if product.price is not None:
-                        product_price = float(product.price)
-                    else:
-                        details = product.details.all()
-                        if details.exists():
-                            prices = [float(detail.price) for detail in details if detail.price is not None]
-                            if prices:
-                                product_price = min(prices)
+                # Get product price using service
+                product_price = ProductPriceService.get_product_price(
+                    product=product,
+                    variation_id=variation_id,
+                    variation_dict=variation_dict_mode2,
+                    product_ids_dict=product_ids_dict_mode2
+                )
                 
                 if product_price is None:
                     continue
@@ -2291,14 +2196,14 @@ class CalculatePaymentScheduleView(APIView):
                                             result = post_to_grist_application(
                                                 counterparty_id=counterparty_id,
                                                 date=current_date_str,
-                                                stage='New',
+                                                stage=ApplicationStages.NEW,
                                                 risk_category_id=risk_category_id,
                                                 issue_limit=float(total_advance_payment_mode2),
                                                 products=product_ids_for_application
                                             )
                                             
                                             if result:
-                                                application_status = 'New'
+                                                application_status = ApplicationStages.NEW
                                         except Exception as e:
                                             pass
                             elif today_stage == 'Success':
@@ -2332,14 +2237,14 @@ class CalculatePaymentScheduleView(APIView):
                                         result = post_to_grist_application(
                                             counterparty_id=counterparty_id,
                                             date=current_date_str,
-                                            stage='New',
+                                            stage=ApplicationStages.NEW,
                                             risk_category_id=risk_category_id,
                                             issue_limit=float(total_advance_payment_mode2),
                                             products=product_ids_for_application
                                         )
                                         
                                         if result:
-                                            application_status = 'New'
+                                            application_status = ApplicationStages.NEW
                                     except Exception as e:
                                         pass
                     else:
@@ -2351,7 +2256,7 @@ class CalculatePaymentScheduleView(APIView):
                             
                             should_create_application = latest_stage in ['Accepted', 'Success']
                             
-                            if latest_stage in ['Accepted', 'Denied']:
+                            if latest_stage in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED]:
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                             
                             if risk_category_id:
@@ -2471,7 +2376,7 @@ class CalculatePaymentScheduleView(APIView):
                                         app_stage = app.get('fields', {}).get('stage', '')
                                         app_date = app.get('fields', {}).get('date')
                                         
-                                        if app_counterparty_id == counterparty_id and app_stage == 'Accepted' and app_date:
+                                        if app_counterparty_id == counterparty_id and app_stage == ApplicationStages.ACCEPTED and app_date:
                                             app_date_timestamp = None
                                             if isinstance(app_date, (int, float)):
                                                 app_date_timestamp = int(app_date)
@@ -2531,14 +2436,14 @@ class CalculatePaymentScheduleView(APIView):
                                                 result = post_to_grist_application(
                                                     counterparty_id=counterparty_id,
                                                     date=current_date_str,
-                                                    stage='New',
+                                                    stage=ApplicationStages.NEW,
                                                     risk_category_id=risk_category_id,
                                                     issue_limit=float(total_advance_payment_mode2),
                                                     products=product_ids_for_application
                                                 )
                                                 
                                                 if result:
-                                                    application_status = 'New'
+                                                    application_status = ApplicationStages.NEW
                                             except Exception:
                                                 pass
                                     
@@ -2574,14 +2479,14 @@ class CalculatePaymentScheduleView(APIView):
                                                 result = post_to_grist_application(
                                                     counterparty_id=counterparty_id,
                                                     date=current_date_str,
-                                                    stage='New',
+                                                    stage=ApplicationStages.NEW,
                                                     risk_category_id=risk_category_id,
                                                     issue_limit=float(total_advance_payment_mode2),
                                                     products=product_ids_for_application
                                                 )
                                                 
                                                 if result:
-                                                    application_status = 'New'
+                                                    application_status = ApplicationStages.NEW
                                             except Exception as e:
                                                 pass
                         else:
@@ -2621,14 +2526,14 @@ class CalculatePaymentScheduleView(APIView):
                                         result = post_to_grist_application(
                                             counterparty_id=counterparty_id,
                                             date=current_date_str,
-                                            stage='New',
+                                            stage=ApplicationStages.NEW,
                                             risk_category_id=risk_category_id,
                                             issue_limit=float(total_advance_payment_mode2),
                                             products=product_ids_for_application
                                         )
                                         
                                         if result:
-                                            application_status = 'New'
+                                            application_status = ApplicationStages.NEW
                                     except Exception as e:
                                         pass
                             
@@ -2642,7 +2547,7 @@ class CalculatePaymentScheduleView(APIView):
         if application_status == 'Accepted':
             if calculation_mode == 1:
                 meets_minimum = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
-            elif calculation_mode == 2:
+            elif calculation_mode == CalculationModes.MODE_2:
                 meets_minimum = float(total_down_payment) >= minimum_contribution if minimum_contribution > 0 else True
             else:
                 meets_minimum = True
@@ -2684,7 +2589,7 @@ class CalculatePaymentScheduleView(APIView):
                     "tariff_id": int(tariff_id) if tariff_id else None,
                     "advance_payment": round(float(total_down_payment) / len(products_data), 2) if products_data else 0
                 })
-        elif calculation_mode == 2:
+        elif calculation_mode == CalculationModes.MODE_2:
             for item in product_list:
                 product_id = item.get('product_id')
                 quantity = item.get('quantity', 1)
@@ -2708,7 +2613,7 @@ class CalculatePaymentScheduleView(APIView):
         
         if calculation_mode == 1:
             total_products_price = original_total_product_sum
-        elif calculation_mode == 2:
+        elif calculation_mode == CalculationModes.MODE_2:
             total_products_price = original_total_product_sum
         else:
             total_products_price = original_total_product_sum
@@ -2834,15 +2739,15 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if calculation_mode not in [1, 2]:
+        if calculation_mode not in CalculationModes.VALID_MODES:
             return Response(
-                {"error": "calculation_mode должен быть 1 или 2"},
+                {"error": f"calculation_mode должен быть {CalculationModes.MODE_1} или {CalculationModes.MODE_2}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         monthly_payments = []
         
-        if calculation_mode == 1:
+        if calculation_mode == CalculationModes.MODE_1:
             total_down_payment = request.data.get('total_advance_payment')
             tariff_id = request.data.get('tariff_id')
             
@@ -2867,150 +2772,38 @@ class CalculatePaymentScheduleSimpleView(APIView):
             
             tariff = get_object_or_404(Tariffs, id=tariff_id)
             
-            is_no_installment = tariff.name and "No installment" in tariff.name
+            is_no_installment = tariff.name and TariffConstants.NO_INSTALLMENT_KEYWORD in tariff.name
             
-            total_product_sum = 0
-            products_data = []
-            
+            # Get products and build dictionaries using service
             product_ids = [item.get('product_id') for item in product_list]
             products = Products.objects.prefetch_related('details', 'ids').filter(id__in=product_ids)
             products_dict = {p.id: p for p in products}
             
             product_ids_objs = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
-            product_ids_dict = {}
-            variation_dict = {}
+            variation_dict, product_ids_dict = ProductPriceService.build_variation_dict(product_ids_objs)
             
-            for pid_obj in product_ids_objs:
-                if pid_obj.product_id not in product_ids_dict:
-                    product_ids_dict[pid_obj.product_id] = []
-                product_ids_dict[pid_obj.product_id].append(pid_obj)
-                
-                key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
-                variation_dict[key] = pid_obj
+            # Process product list using service
+            products_data, total_product_sum = ProductPriceService.process_product_list(
+                product_list=product_list,
+                products_dict=products_dict,
+                variation_dict=variation_dict,
+                product_ids_dict=product_ids_dict
+            )
             
-            for item in product_list:
-                product_id = item.get('product_id')
-                quantity = item.get('quantity', 1)
-                variation_id = item.get('variation_id')
-                
-                product = products_dict.get(product_id)
-                if not product:
-                    continue
-                
-                product_price = None
-                
-                if variation_id:
-                    key = (product_id, str(variation_id))
-                    product_id_obj = variation_dict.get(key)
-                    
-                    if product_id_obj and product_id_obj.variation_name:
-                        variation_name = product_id_obj.variation_name.upper()
-                        details = product.details.all()
-                        
-                        for detail in details:
-                            color = detail.color or ""
-                            storage = detail.storage or ""
-                            sim = detail.sim or ""
-                            
-                            color_match = color.upper() in variation_name if color else False
-                            storage_match = storage.upper() in variation_name if storage else False
-                            
-                            sim_match = False
-                            # Agar variation_name'da SIM ma'lumoti bo'lmasa, SIM matching shart emas
-                            variation_has_sim_info = "SIM" in variation_name or "DUAL" in variation_name or "ESIM" in variation_name
-                            
-                            if sim:
-                                sim_normalized = sim.replace("+", "").replace(" ", "").upper()
-                                variation_name_normalized = variation_name.replace(" ", "").replace("+", "")
-                                
-                                if sim.upper() in variation_name:
-                                    sim_match = True
-                                elif sim_normalized and sim_normalized in variation_name_normalized:
-                                    sim_match = True
-                                elif "SIM" in sim_normalized and "SIM" in variation_name:
-                                    sim_match = True
-                                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
-                                    sim_match = True
-                                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
-                                    sim_match = True
-                            
-                            # Agar variation_name'da SIM ma'lumoti bo'lmasa, SIM matching shart emas
-                            sim_required = bool(sim) and variation_has_sim_info
-                            
-                            if color_match and storage_match and (sim_match if sim_required else True):
-                                if detail.price is not None:
-                                    product_price = float(detail.price)
-                                    break
-                
-                if product_price is None:
-                    if product.price is not None:
-                        product_price = float(product.price)
-                    else:
-                        details = product.details.all()
-                        if details.exists():
-                            prices = [float(detail.price) for detail in details if detail.price is not None]
-                            if prices:
-                                product_price = min(prices)
-                
-                if product_price is None:
-                    continue
-                
-                total_product_sum += product_price * quantity
-                
-                # Response uchun variation_id: agar request'da variation_id bo'lsa, uni ishlatish, aks holda birinchi topilganini
-                response_variation_id = None
-                if variation_id:
-                    # Request'dan kelgan variation_id ni ishlatish
-                    response_variation_id = variation_id
-                else:
-                    # Agar variation_id bo'lmasa, birinchi topilganini ishlatish
-                    product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
-                    response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
-                
-                products_data.append({
-                    'product': product,
-                    'quantity': quantity,
-                    'price': product_price,
-                    'variation_id': response_variation_id
-                })
-            
+            # Calculate remaining amount after down payment
             original_total_product_sum = total_product_sum
             total_product_sum = max(0, total_product_sum - float(total_down_payment))
             
-            if total_product_sum > 0:
-                monthly_payment_amount = round(
-                    total_product_sum * get_tariff_coefficient_ratio(tariff)
-                )
-            else:
-                monthly_payment_amount = 0
+            # Calculate monthly payment amount using utility
+            monthly_payment_amount = calculate_monthly_payment_amount(total_product_sum, tariff)
             
-            current_date = datetime.now()
-            
+            # Generate monthly payments using utility
             if not is_no_installment and monthly_payment_amount > 0:
-                safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
-                for month_num in range(1, safe_payments_count + 1):
-                    year = current_date.year
-                    month = current_date.month + month_num
-                    day = current_date.day
-                    
-                    while month > 12:
-                        month -= 12
-                        year += 1
-                    
-                    max_day = monthrange(year, month)[1]
-                    if day > max_day:
-                        day = max_day
-                    
-                    payment_date = datetime(year, month, day)
-                    
-                    if tariff.offset_days:
-                        payment_date = payment_date + timedelta(days=tariff.offset_days)
-                    
-                    monthly_payments.append({
-                        "number": month_num,
-                        "date": payment_date.strftime("%d/%m/%y"),
-                        "payment": monthly_payment_amount
-                    })
+                monthly_payments = generate_monthly_payments(
+                    tariff=tariff,
+                    total_amount=monthly_payment_amount,
+                    start_date=datetime.now()
+                )
             
             response_product_list = []
             for prod_data in products_data:
@@ -3026,7 +2819,7 @@ class CalculatePaymentScheduleSimpleView(APIView):
                     "advance_payment": round(float(total_down_payment) / len(products_data), 2) if products_data else 0
                 })
         
-        elif calculation_mode == 2:
+        elif calculation_mode == CalculationModes.MODE_2:
             merged_payments = {}
             max_months = 0
             
@@ -3038,17 +2831,9 @@ class CalculatePaymentScheduleSimpleView(APIView):
             tariffs = Tariffs.objects.filter(id__in=tariff_ids)
             tariffs_dict = {t.id: t for t in tariffs}
             
+            # Build variation dict using service
             product_ids_objs_mode2 = ProductIDs.objects.filter(product_id__in=product_ids).select_related('product')
-            product_ids_dict_mode2 = {}
-            variation_dict_mode2 = {}
-            
-            for pid_obj in product_ids_objs_mode2:
-                if pid_obj.product_id not in product_ids_dict_mode2:
-                    product_ids_dict_mode2[pid_obj.product_id] = []
-                product_ids_dict_mode2[pid_obj.product_id].append(pid_obj)
-                
-                key = (pid_obj.product_id, str(pid_obj.variation_id) if pid_obj.variation_id else None)
-                variation_dict_mode2[key] = pid_obj
+            variation_dict_mode2, product_ids_dict_mode2 = ProductPriceService.build_variation_dict(product_ids_objs_mode2)
             
             for item in product_list:
                 product_id = item.get('product_id')
@@ -3064,57 +2849,19 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 if not tariff:
                     continue
                 
-                is_no_installment = tariff.name and "No installment" in tariff.name
+                is_no_installment = tariff.name and TariffConstants.NO_INSTALLMENT_KEYWORD in tariff.name
                 
                 product = products_dict.get(product_id)
                 if not product:
                     continue
                 
-                product_price = None
-                
-                if variation_id:
-                    key = (product_id, str(variation_id))
-                    product_id_obj = variation_dict_mode2.get(key)
-                    if product_id_obj and product_id_obj.variation_name:
-                        variation_name = product_id_obj.variation_name.upper()
-                        details = product.details.all()
-                        
-                        for detail in details:
-                            color = detail.color or ""
-                            storage = detail.storage or ""
-                            sim = detail.sim or ""
-                            
-                            color_match = color.upper() in variation_name if color else False
-                            storage_match = storage.upper() in variation_name if storage else False
-                            
-                            sim_match = False
-                            if sim:
-                                sim_normalized = sim.replace("+", "").replace(" ", "").upper()
-                                if sim.upper() in variation_name:
-                                    sim_match = True
-                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
-                                    sim_match = True
-                                elif "SIM" in sim_normalized and "SIM" in variation_name:
-                                    sim_match = True
-                                elif "DUAL" in sim_normalized and "DUAL" in variation_name:
-                                    sim_match = True
-                                elif "ESIM" in sim_normalized and "ESIM" in variation_name:
-                                    sim_match = True
-                            
-                            if color_match and storage_match and (sim_match if sim else True):
-                                if detail.price is not None:
-                                    product_price = float(detail.price)
-                                    break
-                
-                if product_price is None:
-                    if product.price is not None:
-                        product_price = float(product.price)
-                    else:
-                        details = product.details.all()
-                        if details.exists():
-                            prices = [float(detail.price) for detail in details if detail.price is not None]
-                            if prices:
-                                product_price = min(prices)
+                # Get product price using service
+                product_price = ProductPriceService.get_product_price(
+                    product=product,
+                    variation_id=variation_id,
+                    variation_dict=variation_dict_mode2,
+                    product_ids_dict=product_ids_dict_mode2
+                )
                 
                 if product_price is None:
                     continue
@@ -3123,49 +2870,32 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 total_after_advance = max(0, total_product_price - float(item_advance_payment))
                 
                 if not is_no_installment:
-                    if total_after_advance > 0:
-                        monthly_payment = round(
-                            total_after_advance * get_tariff_coefficient_ratio(tariff)
-                        )
-                    else:
-                        monthly_payment = 0
+                    # Calculate monthly payment using utility
+                    monthly_payment = calculate_monthly_payment_amount(total_after_advance, tariff)
                     
                     safe_payments_count = tariff.payments_count if tariff.payments_count and tariff.payments_count > 0 else 1
                     
                     if safe_payments_count > max_months:
                         max_months = safe_payments_count
                     
-                    current_date = datetime.now()
-                    
                     if monthly_payment > 0:
-                        for month_num in range(1, safe_payments_count + 1):
-                            year = current_date.year
-                            month = current_date.month + month_num
-                            day = current_date.day
-                            
-                            while month > 12:
-                                month -= 12
-                                year += 1
-                            
-                            max_day = monthrange(year, month)[1]
-                            if day > max_day:
-                                day = max_day
-                            
-                            payment_date = datetime(year, month, day)
-                            
-                            if tariff.offset_days:
-                                payment_date = payment_date + timedelta(days=tariff.offset_days)
-                            
-                            date_key = payment_date.strftime("%d/%m/%y")
-                            
+                        # Generate monthly payments using utility
+                        item_monthly_payments = generate_monthly_payments(
+                            tariff=tariff,
+                            total_amount=monthly_payment,
+                            start_date=datetime.now()
+                        )
+                        
+                        # Merge payments by date
+                        for payment in item_monthly_payments:
+                            date_key = payment['date']
                             if date_key not in merged_payments:
                                 merged_payments[date_key] = {
-                                    "number": month_num,
+                                    "number": payment['number'],
                                     "date": date_key,
                                     "payment": 0
                                 }
-                            
-                            merged_payments[date_key]["payment"] += monthly_payment
+                            merged_payments[date_key]["payment"] += payment['payment']
             
             monthly_payments = sorted(merged_payments.values(), key=lambda x: x["number"])
             
