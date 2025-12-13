@@ -859,6 +859,14 @@ class VerifyMyIDDataView(APIView):
         if permanent_registration is None or not isinstance(permanent_registration, dict):
             permanent_registration = {}
         
+        temporary_registration = address_data.get("temporary_registration") if isinstance(address_data, dict) else None
+        if temporary_registration is None or not isinstance(temporary_registration, dict):
+            temporary_registration = {}
+        
+        # permanent_address va temporary_address field'lari ham bor
+        permanent_address_str = address_data.get("permanent_address", "") if isinstance(address_data, dict) else ""
+        temporary_address_str = address_data.get("temporary_address", "") if isinstance(address_data, dict) else ""
+        
         try:
             phone = contacts.get("phone", "") if isinstance(contacts, dict) else ""
             first_name = common_data.get("first_name", "") if isinstance(common_data, dict) else ""
@@ -868,10 +876,29 @@ class VerifyMyIDDataView(APIView):
             birth_date_str = common_data.get("birth_date", "") if isinstance(common_data, dict) else ""
             pass_data = doc_data.get("pass_data", "") if isinstance(doc_data, dict) else ""
             
+            # Avval permanent_registration dan olish
             address = permanent_registration.get("address", "") if isinstance(permanent_registration, dict) else ""
             region = permanent_registration.get("region", "") if isinstance(permanent_registration, dict) else ""
             country = permanent_registration.get("country", "") if isinstance(permanent_registration, dict) else ""
             district = permanent_registration.get("district", "") if isinstance(permanent_registration, dict) else ""
+            
+            # Agar permanent_registration bo'sh bo'lsa, temporary_registration dan olish
+            if not address and temporary_registration:
+                address = temporary_registration.get("address", "") if isinstance(temporary_registration, dict) else ""
+                if not region:
+                    region = temporary_registration.get("region", "") if isinstance(temporary_registration, dict) else ""
+                if not country:
+                    country = temporary_registration.get("country", "") if isinstance(temporary_registration, dict) else ""
+                if not district:
+                    district = temporary_registration.get("district", "") if isinstance(temporary_registration, dict) else ""
+            
+            # Agar hali ham address bo'sh bo'lsa, permanent_address_str dan olish
+            if not address and permanent_address_str:
+                address = permanent_address_str
+            
+            # Agar hali ham address bo'sh bo'lsa, temporary_address_str dan olish
+            if not address and temporary_address_str:
+                address = temporary_address_str
         except Exception as e:
             return Response(
                 {
