@@ -1215,6 +1215,118 @@ def has_active_orders(user):
     
     return active_orders
 
+def has_denied_by_client_for_products(applications, counterparty_id, product_list):
+    """
+    Berilgan mahsulotlar uchun 'Denied by client' stage bor-yo'qligini tekshiradi.
+    Faqat o'sha mahsulotlar uchun tekshiradi, boshqalari uchun emas.
+    """
+    if not applications or not counterparty_id or not product_list:
+        return False
+    
+    try:
+        from apps.v1.product.models import Products
+        from apps.v1.order.models import OrderItems
+        
+        # Request'dagi mahsulotlarni olish
+        request_product_ids = [item.get('product_id') for item in product_list if item.get('product_id')]
+        request_variation_ids = [str(item.get('variation_id')) for item in product_list if item.get('variation_id')]
+        
+        # Applications'lardan 'Denied by client' stage bilan mahsulotlarni topish
+        for app in applications:
+            app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+            app_stage = app.get('fields', {}).get('stage', '')
+            
+            if app_counterparty_id == counterparty_id and app_stage == 'Denied by client':
+                # Application'dagi mahsulotlarni olish
+                app_products_match = compare_application_products_with_request(app, product_list)
+                if app_products_match:
+                    return True
+        
+        return False
+    except Exception:
+        return False
+
+def has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
+    """
+    Berilgan mahsulotlar uchun 'Accepted' stage bor, lekin Order tablega qo'shilmaganligini tekshiradi.
+    """
+    if not user or not applications or not counterparty_id or not product_list:
+        return False
+    
+    try:
+        from apps.v1.order.models import OrderItems
+        
+        # Applications'lardan 'Accepted' stage bilan mahsulotlarni topish
+        for app in applications:
+            app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+            app_stage = app.get('fields', {}).get('stage', '')
+            
+            if app_counterparty_id == counterparty_id and app_stage == 'Accepted':
+                # Application'dagi mahsulotlar request'dagi mahsulotlar bilan mos keladimi?
+                app_products_match = compare_application_products_with_request(app, product_list)
+                if app_products_match:
+                    # Bu mahsulotlar Order tablega qo'shilganmi?
+                    # Request'dagi barcha mahsulotlar uchun tekshirish
+                    for item in product_list:
+                        product_id = item.get('product_id')
+                        variation_id = item.get('variation_id')
+                        
+                        if not product_id:
+                            continue
+                        
+                        # Variation_id bilan tekshirish
+                        if variation_id:
+                            order_item_exists = OrderItems.objects.filter(
+                                order__user=user,
+                                product_id=product_id,
+                                variation__variation_id=str(variation_id)
+                            ).exists()
+                            if not order_item_exists:
+                                return True
+                        else:
+                            # Variation_id bo'lmasa, faqat product_id bilan tekshirish
+                            order_item_exists = OrderItems.objects.filter(
+                                order__user=user,
+                                product_id=product_id,
+                                variation__isnull=True
+                            ).exists()
+                            if not order_item_exists:
+                                return True
+        
+        return False
+    except Exception:
+        return False
+
+def has_denied_within_30_days(applications, counterparty_id):
+    """
+    'Denied' stage bor va 30 kundan kam o'tganligini tekshiradi.
+    """
+    if not applications or not counterparty_id:
+        return False
+    
+    try:
+        from datetime import datetime
+        
+        for app in applications:
+            app_counterparty_id = app.get('fields', {}).get('counterparty_id')
+            app_stage = app.get('fields', {}).get('stage', '')
+            
+            if app_counterparty_id == counterparty_id and app_stage == 'Denied':
+                denied_date = app.get('fields', {}).get('date', 0)
+                
+                if denied_date:
+                    if isinstance(denied_date, (int, float)):
+                        denied_datetime = datetime.fromtimestamp(denied_date)
+                        current_datetime = datetime.now()
+                        days_passed = (current_datetime - denied_datetime).days
+                        
+                        if days_passed < 30:
+                            return True
+        
+        return False
+    except Exception:
+        return False
+
 class CalculatePaymentScheduleView(APIView):
     """
     View for calculating payment schedule based on calculation mode.
@@ -1399,6 +1511,7 @@ class CalculatePaymentScheduleView(APIView):
                 if variation_id:
                     key = (product_id, str(variation_id))
                     product_id_obj = variation_dict.get(key)
+                    
                     if product_id_obj and product_id_obj.variation_name:
                         variation_name = product_id_obj.variation_name.upper()
                         details = product.details.all()
@@ -1412,11 +1525,16 @@ class CalculatePaymentScheduleView(APIView):
                             storage_match = storage.upper() in variation_name if storage else False
                             
                             sim_match = False
+                            # Agar variation_name'da SIM ma'lumoti bo'lmasa, SIM matching shart emas
+                            variation_has_sim_info = "SIM" in variation_name or "DUAL" in variation_name or "ESIM" in variation_name
+                            
                             if sim:
                                 sim_normalized = sim.replace("+", "").replace(" ", "").upper()
+                                variation_name_normalized = variation_name.replace(" ", "").replace("+", "")
+                                
                                 if sim.upper() in variation_name:
                                     sim_match = True
-                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                                elif sim_normalized and sim_normalized in variation_name_normalized:
                                     sim_match = True
                                 elif "SIM" in sim_normalized and "SIM" in variation_name:
                                     sim_match = True
@@ -1425,7 +1543,10 @@ class CalculatePaymentScheduleView(APIView):
                                 elif "ESIM" in sim_normalized and "ESIM" in variation_name:
                                     sim_match = True
                             
-                            if color_match and storage_match and (sim_match if sim else True):
+                            # Agar variation_name'da SIM ma'lumoti bo'lmasa, SIM matching shart emas
+                            sim_required = bool(sim) and variation_has_sim_info
+                            
+                            if color_match and storage_match and (sim_match if sim_required else True):
                                 if detail.price is not None:
                                     product_price = float(detail.price)
                                     break
@@ -1445,8 +1566,15 @@ class CalculatePaymentScheduleView(APIView):
                 
                 total_product_sum += product_price * quantity
                 
-                product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
-                response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
+                # Response uchun variation_id: agar request'da variation_id bo'lsa, uni ishlatish, aks holda birinchi topilganini
+                response_variation_id = None
+                if variation_id:
+                    # Request'dan kelgan variation_id ni ishlatish
+                    response_variation_id = variation_id
+                else:
+                    # Agar variation_id bo'lmasa, birinchi topilganini ishlatish
+                    product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
+                    response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
                 
                 products_data.append({
                     'product': product,
@@ -1618,15 +1746,33 @@ class CalculatePaymentScheduleView(APIView):
                                         break
                                 
                                 if not found_today_accepted:
-                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    # Tekshiruvlar: post qilishni to'xtatadigan holatlar
+                                    should_post = True
                                     
-                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    # 1. Faol orderlar tekshiruvi
+                                    if has_active_orders(user):
+                                        should_post = False
                                     
-                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                        should_post = False
                                     
-                                    # User uchun faol orderlar bor-yo'qligini tekshirish
-                                    if not has_active_orders(user):
+                                    # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
+                                    if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
+                                        should_post = False
+                                    
+                                    # 4. Denied 30 kundan kam o'tgan tekshiruvi
+                                    if has_denied_within_30_days(applications, counterparty_id):
+                                        should_post = False
+                                    
+                                    if should_post:
+                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                        
+                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                        
+                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                        
                                         try:
                                             current_date_str = datetime.now().strftime("%Y-%m-%d")
                                             
@@ -1647,15 +1793,29 @@ class CalculatePaymentScheduleView(APIView):
                             
                             if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
                                 if latest_stage == 'Success':
-                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    # Success stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
+                                    should_post = True
                                     
-                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    # 1. Faol orderlar tekshiruvi
+                                    if has_active_orders(user):
+                                        should_post = False
                                     
-                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                        should_post = False
                                     
-                                    # User uchun faol orderlar bor-yo'qligini tekshirish
-                                    if not has_active_orders(user):
+                                    # 3. Denied 30 kundan kam o'tgan tekshiruvi
+                                    if has_denied_within_30_days(applications, counterparty_id):
+                                        should_post = False
+                                    
+                                    if should_post:
+                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                        
+                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                        
+                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                        
                                         try:
                                             current_date_str = datetime.now().strftime("%Y-%m-%d")
                                             
@@ -1675,15 +1835,33 @@ class CalculatePaymentScheduleView(APIView):
                                             pass
                                 
                                 if application_status != 'Accepted' and application_status != 'New':
-                                    grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                    # Tekshiruvlar: post qilishni to'xtatadigan holatlar
+                                    should_post = True
                                     
-                                    from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
-                                    product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                    # 1. Faol orderlar tekshiruvi
+                                    if has_active_orders(user):
+                                        should_post = False
                                     
-                                    risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                        should_post = False
                                     
-                                    # User uchun faol orderlar bor-yo'qligini tekshirish
-                                    if not has_active_orders(user):
+                                    # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
+                                    if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
+                                        should_post = False
+                                    
+                                    # 4. Denied 30 kundan kam o'tgan tekshiruvi
+                                    if has_denied_within_30_days(applications, counterparty_id):
+                                        should_post = False
+                                    
+                                    if should_post:
+                                        grist_product_ids = get_grist_product_ids_from_request(product_list)
+                                        
+                                        from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
+                                        product_ids_for_application = get_product_ids_from_price_table_by_grist_ids(grist_product_ids)
+                                        
+                                        risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                        
                                         try:
                                             current_date_str = datetime.now().strftime("%Y-%m-%d")
                                             
@@ -1711,8 +1889,26 @@ class CalculatePaymentScheduleView(APIView):
                             
                             risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                             
-                            # User uchun faol orderlar bor-yo'qligini tekshirish
-                            if not has_active_orders(user):
+                            # Tekshiruvlar: post qilishni to'xtatadigan holatlar
+                            should_post = True
+                            
+                            # 1. Faol orderlar tekshiruvi
+                            if has_active_orders(user):
+                                should_post = False
+                            
+                            # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                            if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                should_post = False
+                            
+                            # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
+                            if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
+                                should_post = False
+                            
+                            # 4. Denied 30 kundan kam o'tgan tekshiruvi
+                            if has_denied_within_30_days(applications, counterparty_id):
+                                should_post = False
+                            
+                            if should_post:
                                 try:
                                     current_date_str = datetime.now().strftime("%Y-%m-%d")
                                     
@@ -2071,8 +2267,26 @@ class CalculatePaymentScheduleView(APIView):
                                     
                                     total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                                     
-                                    # User uchun faol orderlar bor-yo'qligini tekshirish
-                                    if not has_active_orders(user):
+                                    # Tekshiruvlar: post qilishni to'xtatadigan holatlar
+                                    should_post = True
+                                    
+                                    # 1. Faol orderlar tekshiruvi
+                                    if has_active_orders(user):
+                                        should_post = False
+                                    
+                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                        should_post = False
+                                    
+                                    # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
+                                    if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
+                                        should_post = False
+                                    
+                                    # 4. Denied 30 kundan kam o'tgan tekshiruvi
+                                    if has_denied_within_30_days(applications, counterparty_id):
+                                        should_post = False
+                                    
+                                    if should_post:
                                         try:
                                             result = post_to_grist_application(
                                                 counterparty_id=counterparty_id,
@@ -2098,8 +2312,22 @@ class CalculatePaymentScheduleView(APIView):
                                 
                                 total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                                 
-                                # User uchun faol orderlar bor-yo'qligini tekshirish
-                                if not has_active_orders(user):
+                                # Success stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
+                                should_post = True
+                                
+                                # 1. Faol orderlar tekshiruvi
+                                if has_active_orders(user):
+                                    should_post = False
+                                
+                                # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                    should_post = False
+                                
+                                # 3. Denied 30 kundan kam o'tgan tekshiruvi
+                                if has_denied_within_30_days(applications, counterparty_id):
+                                    should_post = False
+                                
+                                if should_post:
                                     try:
                                         result = post_to_grist_application(
                                             counterparty_id=counterparty_id,
@@ -2269,8 +2497,26 @@ class CalculatePaymentScheduleView(APIView):
                                             break
                                     
                                     if not found_today_accepted:
-                                        # User uchun faol orderlar bor-yo'qligini tekshirish
-                                        if not has_active_orders(user):
+                                        # Tekshiruvlar: post qilishni to'xtatadigan holatlar
+                                        should_post = True
+                                        
+                                        # 1. Faol orderlar tekshiruvi
+                                        if has_active_orders(user):
+                                            should_post = False
+                                        
+                                        # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                        if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                            should_post = False
+                                        
+                                        # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
+                                        if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
+                                            should_post = False
+                                        
+                                        # 4. Denied 30 kundan kam o'tgan tekshiruvi
+                                        if has_denied_within_30_days(applications, counterparty_id):
+                                            should_post = False
+                                        
+                                        if should_post:
                                             try:
                                                 grist_product_ids = get_grist_product_ids_from_request(product_list)
                                                 
@@ -2298,8 +2544,22 @@ class CalculatePaymentScheduleView(APIView):
                                     
                                 if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
                                     if latest_stage == 'Success':
-                                        # User uchun faol orderlar bor-yo'qligini tekshirish
-                                        if not has_active_orders(user):
+                                        # Success stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
+                                        should_post = True
+                                        
+                                        # 1. Faol orderlar tekshiruvi
+                                        if has_active_orders(user):
+                                            should_post = False
+                                        
+                                        # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                        if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                            should_post = False
+                                        
+                                        # 3. Denied 30 kundan kam o'tgan tekshiruvi
+                                        if has_denied_within_30_days(applications, counterparty_id):
+                                            should_post = False
+                                        
+                                        if should_post:
                                             try:
                                                 grist_product_ids = get_grist_product_ids_from_request(product_list)
                                                 
@@ -2333,8 +2593,26 @@ class CalculatePaymentScheduleView(APIView):
                                 
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                 
-                                # User uchun faol orderlar bor-yo'qligini tekshirish
-                                if not has_active_orders(user):
+                                # Tekshiruvlar: post qilishni to'xtatadigan holatlar
+                                should_post = True
+                                
+                                # 1. Faol orderlar tekshiruvi
+                                if has_active_orders(user):
+                                    should_post = False
+                                
+                                # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
+                                if has_denied_by_client_for_products(applications, counterparty_id, product_list):
+                                    should_post = False
+                                
+                                # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
+                                if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
+                                    should_post = False
+                                
+                                # 4. Denied 30 kundan kam o'tgan tekshiruvi
+                                if has_denied_within_30_days(applications, counterparty_id):
+                                    should_post = False
+                                
+                                if should_post:
                                     try:
                                         current_date_str = datetime.now().strftime("%Y-%m-%d")
                                         
@@ -2624,6 +2902,7 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 if variation_id:
                     key = (product_id, str(variation_id))
                     product_id_obj = variation_dict.get(key)
+                    
                     if product_id_obj and product_id_obj.variation_name:
                         variation_name = product_id_obj.variation_name.upper()
                         details = product.details.all()
@@ -2637,11 +2916,16 @@ class CalculatePaymentScheduleSimpleView(APIView):
                             storage_match = storage.upper() in variation_name if storage else False
                             
                             sim_match = False
+                            # Agar variation_name'da SIM ma'lumoti bo'lmasa, SIM matching shart emas
+                            variation_has_sim_info = "SIM" in variation_name or "DUAL" in variation_name or "ESIM" in variation_name
+                            
                             if sim:
                                 sim_normalized = sim.replace("+", "").replace(" ", "").upper()
+                                variation_name_normalized = variation_name.replace(" ", "").replace("+", "")
+                                
                                 if sim.upper() in variation_name:
                                     sim_match = True
-                                elif sim_normalized and sim_normalized in variation_name.replace(" ", "").replace("+", ""):
+                                elif sim_normalized and sim_normalized in variation_name_normalized:
                                     sim_match = True
                                 elif "SIM" in sim_normalized and "SIM" in variation_name:
                                     sim_match = True
@@ -2650,7 +2934,10 @@ class CalculatePaymentScheduleSimpleView(APIView):
                                 elif "ESIM" in sim_normalized and "ESIM" in variation_name:
                                     sim_match = True
                             
-                            if color_match and storage_match and (sim_match if sim else True):
+                            # Agar variation_name'da SIM ma'lumoti bo'lmasa, SIM matching shart emas
+                            sim_required = bool(sim) and variation_has_sim_info
+                            
+                            if color_match and storage_match and (sim_match if sim_required else True):
                                 if detail.price is not None:
                                     product_price = float(detail.price)
                                     break
@@ -2670,8 +2957,15 @@ class CalculatePaymentScheduleSimpleView(APIView):
                 
                 total_product_sum += product_price * quantity
                 
-                product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
-                response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
+                # Response uchun variation_id: agar request'da variation_id bo'lsa, uni ishlatish, aks holda birinchi topilganini
+                response_variation_id = None
+                if variation_id:
+                    # Request'dan kelgan variation_id ni ishlatish
+                    response_variation_id = variation_id
+                else:
+                    # Agar variation_id bo'lmasa, birinchi topilganini ishlatish
+                    product_id_obj = product_ids_dict.get(product_id, [None])[0] if product_ids_dict.get(product_id) else None
+                    response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
                 
                 products_data.append({
                     'product': product,
@@ -2680,6 +2974,7 @@ class CalculatePaymentScheduleSimpleView(APIView):
                     'variation_id': response_variation_id
                 })
             
+            original_total_product_sum = total_product_sum
             total_product_sum = max(0, total_product_sum - float(total_down_payment))
             
             if total_product_sum > 0:
