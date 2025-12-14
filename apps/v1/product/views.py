@@ -1051,13 +1051,13 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
     """
     Calculate minimum_contribution for products based on user's approved applications
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
     if not user or not counterparty_id:
-
         return 0
     
     try:
-
         approved_applications = []
         for idx, app in enumerate(applications):
             app_counterparty_id = app.get('fields', {}).get('counterparty_id')
@@ -1065,13 +1065,10 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
             app_id = app.get('id')
 
             if app_counterparty_id == counterparty_id and app_stage == ApplicationStages.ACCEPTED:
-
                 approved_applications.append(app)
 
         if not approved_applications:
-
             return 0
-        
 
         risk_category_id = None
         for app_idx, app in enumerate(approved_applications):
@@ -1092,26 +1089,25 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
                         if grist_product_id in app_products:
                             risk_category_id = app_risk_category_id
                             product_found = True
-
                             break
-                        else:
-                            pass
                     except (ValueError, TypeError):
                         continue
-                else:
-                    pass
             
             if not product_found and app_risk_category_id:
                 risk_category_id = app_risk_category_id
-
                 break
             
             if risk_category_id:
                 break
         
         if not risk_category_id:
-
             return 0
+        
+        # Risk category ma'lumotlarini olish
+        try:
+            risk_category_obj = ProductRiskCategory.objects.filter(grist_risk_category_id=str(risk_category_id)).first()
+        except Exception:
+            pass
 
         minimum_contribution = 0
 
@@ -1126,7 +1122,6 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
                 try:
                     grist_product_id = int(grist_product_id)
                 except (ValueError, TypeError):
-
                     continue
                 
                 if grist_product_id in grist_product_map:
@@ -1134,42 +1129,25 @@ def calculate_minimum_contribution_for_products(user, products_data, grist_produ
                     
                     if risk_category_id and price_category_id:
                         try:
-
-                            all_risk_categories = ProductRiskCategory.objects.filter(
-                                grist_risk_category_id=str(risk_category_id)
-                            )
-
-                            for rc in all_risk_categories:
-                                pass
-                            
                             product_risk_category = ProductRiskCategory.objects.get(
                                 grist_risk_category_id=str(risk_category_id),
                                 grist_price_category_id=str(price_category_id)
                             )
+                            
                             percentage = product_risk_category.percentage or 0
                             product_total = product_price * quantity
                             contribution = product_total * percentage
+                            
                             minimum_contribution += contribution
 
                         except ProductRiskCategory.DoesNotExist:
-
-                            try:
-                                available = ProductRiskCategory.objects.filter(
-                                    grist_risk_category_id=str(risk_category_id)
-                                )
-                                for rc in available:
-                                    pass
-                            except:
-                                pass
                             pass
                         except Exception:
-
                             pass
-                else:
-                    pass
         
         return minimum_contribution
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error calculating minimum contribution: {e}", exc_info=True)
         return 0
 
 def has_active_orders(user):
@@ -1255,7 +1233,7 @@ def has_accepted_but_not_in_orders(user, applications, counterparty_id, product_
                             ).exists()
                             if not order_item_exists:
                                 return True
-                        else:
+                else:
                             # Variation_id bo'lmasa, faqat product_id bilan tekshirish
                             order_item_exists = OrderItems.objects.filter(
                                 order__user=user,
@@ -1602,7 +1580,14 @@ class CalculatePaymentScheduleView(APIView):
                             
                             if latest_stage in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED]:
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
+                                
                                 if risk_category_id:
+                                    # Risk category ma'lumotlarini olish
+                                    try:
+                                        risk_category_obj = ProductRiskCategory.objects.filter(grist_risk_category_id=str(risk_category_id)).first()
+                                    except Exception:
+                                        pass
+                                    
                                     price_category_ids = set()
                                     grist_product_ids_list = []
                                     
@@ -1625,12 +1610,13 @@ class CalculatePaymentScheduleView(APIView):
                                             grist_risk_category_id=str(risk_category_id),
                                             grist_price_category_id__in=price_category_ids
                                         )
+                                        
                                         risk_category_dict = {
                                             rc.grist_price_category_id: rc 
                                             for rc in risk_categories
                                         }
                                     
-                                    for prod_data in products_data:
+                                    for prod_idx, prod_data in enumerate(products_data):
                                         product = prod_data['product']
                                         quantity = prod_data['quantity']
                                         product_price = prod_data['price']
@@ -1647,9 +1633,24 @@ class CalculatePaymentScheduleView(APIView):
                                                         percentage = product_risk_category.percentage or 0
                                                         product_total = product_price * quantity
                                                         contribution = product_total * percentage
+                                                        
                                                         minimum_contribution += contribution
                                             except (ValueError, TypeError):
                                                 pass
+                                    
+                                    # Issue limit bilan solishtirish
+                                    issue_limit = latest_app.get('fields', {}).get('issue_limit')
+                                    if issue_limit is not None:
+                                        try:
+                                            issue_limit = float(issue_limit)
+                                            
+                                            # Product sum dan issue_limit ni ayirish
+                                            product_sum_minus_issue_limit = original_total_product_sum - issue_limit
+                                            
+                                            # Minimum contribution bilan solishtirish va eng kattasini olish
+                                            minimum_contribution = max(minimum_contribution, product_sum_minus_issue_limit)
+                                        except (ValueError, TypeError):
+                                            pass
                             elif latest_stage in [ApplicationStages.ASSESSMENT, ApplicationStages.NEW]:
                                 minimum_contribution = 0
                             elif latest_stage == ApplicationStages.DENIED_BY_CLIENT:
@@ -1877,9 +1878,7 @@ class CalculatePaymentScheduleView(APIView):
                             if has_active_orders(user):
                                 should_post = False
                             
-                            # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                            if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                should_post = False
+                            # 2. Denied by client tekshiruvi olib tashlandi - endi "Denied by client" holatida ham post qilish mumkin
                             
                             # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
                             if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
@@ -1925,7 +1924,7 @@ class CalculatePaymentScheduleView(APIView):
             total_product_sum = 0
             total_down_payment = 0
             minimum_contribution = 0
-            merged_payments = {}
+            all_payments = []  # Barcha to'lovlarni saqlash uchun list
             max_months = 0
             total_remaining_after_advance = 0
             
@@ -2065,25 +2064,38 @@ class CalculatePaymentScheduleView(APIView):
                         if tariff.offset_days:
                             payment_date = payment_date + timedelta(days=tariff.offset_days)
                         
-                        date_key = payment_date.strftime("%d/%m/%y")
-                        if month_num not in merged_payments:
-                            merged_payments[month_num] = {
-                                'date': date_key,
-                                'amount': 0
-                            }
-                        merged_payments[month_num]['amount'] += product_monthly_payment
+                        # Har bir to'lovni alohida saqlash (date va payment bilan)
+                        all_payments.append({
+                            'date': payment_date,
+                            'payment': product_monthly_payment
+                        })
                         max_months = max(max_months, month_num)
-                
             
+            # Barcha to'lovlarni date bo'yicha birlashtirish
+            merged_payments_by_date = {}
+            for payment in all_payments:
+                date_key = payment['date'].strftime("%d/%m/%y")
+                if date_key not in merged_payments_by_date:
+                    merged_payments_by_date[date_key] = {
+                        'date': payment['date'],
+                        'amount': 0
+                    }
+                merged_payments_by_date[date_key]['amount'] += payment['payment']
+            
+            # Date bo'yicha sortirovka qilish
+            sorted_payments = sorted(merged_payments_by_date.items(), key=lambda x: x[1]['date'])
+            
+            # Qaytadan numeratsiya qilish
             monthly_payments = []
-            for month_num in sorted(merged_payments.keys()):
+            for idx, (date_key, payment_data) in enumerate(sorted_payments, start=1):
                 monthly_payments.append({
-                    "number": month_num,
-                    "date": merged_payments[month_num]['date'],
-                    "payment": merged_payments[month_num]['amount']
+                    "number": idx,
+                    "date": date_key,
+                    "payment": payment_data['amount']
                 })
             
-            monthly_payment_amount = merged_payments.get(1, {}).get('amount', 0) if merged_payments else 0
+            # Birinchi oylik to'lov miqdorini olish
+            monthly_payment_amount = monthly_payments[0]['payment'] if monthly_payments else 0
             
             if user and counterparty_id:
                 try:
@@ -2150,6 +2162,22 @@ class CalculatePaymentScheduleView(APIView):
                                                 pass
                                     except Products.DoesNotExist:
                                         pass
+                                
+                                # Issue limit bilan solishtirish
+                                # Barcha productlarning pricelarini qo'shib, keyin issue_limit ni ayirish
+                                issue_limit = today_app.get('fields', {}).get('issue_limit')
+                                if issue_limit is not None:
+                                    try:
+                                        issue_limit = float(issue_limit)
+                                        
+                                        # Barcha productlarning pricelarini qo'shib, keyin issue_limit ni ayirish
+                                        # original_total_product_sum allaqachon barcha productlarning pricelarini o'z ichiga oladi
+                                        product_sum_minus_issue_limit = original_total_product_sum - issue_limit
+                                        
+                                        # Minimum contribution bilan solishtirish va eng kattasini olish
+                                        minimum_contribution = max(minimum_contribution, product_sum_minus_issue_limit)
+                                    except (ValueError, TypeError):
+                                        pass
                         elif today_stage == 'Denied by client':
                             minimum_contribution = 0
                         elif today_stage in ['Assessment', 'New']:
@@ -2172,24 +2200,19 @@ class CalculatePaymentScheduleView(APIView):
                                     
                                     total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                                     
-                                    # Tekshiruvlar: post qilishni to'xtatadigan holatlar
-                                    should_post = True
+                                    # Check if should post using ApplicationService
+                                    should_post, reason = ApplicationService.should_post_to_grist(
+                                        user=user,
+                                        applications=applications,
+                                        counterparty_id=counterparty_id,
+                                        product_list=product_list
+                                    )
                                     
-                                    # 1. Faol orderlar tekshiruvi
-                                    if has_active_orders(user):
-                                        should_post = False
-                                    
-                                    # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                    if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                        should_post = False
-                                    
-                                    # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
-                                    if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
-                                        should_post = False
-                                    
-                                    # 4. Denied 30 kundan kam o'tgan tekshiruvi
-                                    if has_denied_within_30_days(applications, counterparty_id):
-                                        should_post = False
+                                    if not should_post:
+                                        logger.info(f"Application posting blocked (Mode 2 - Accepted): {reason}", extra={
+                                            'user_id': user.id if user else None,
+                                            'counterparty_id': counterparty_id
+                                        })
                                     
                                     if should_post:
                                         try:
@@ -2217,20 +2240,19 @@ class CalculatePaymentScheduleView(APIView):
                                 
                                 total_advance_payment_mode2 = sum(item.get('advance_payment', 0) for item in product_list)
                                 
-                                # Success stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
-                                should_post = True
+                                # Check if should post using ApplicationService
+                                should_post, reason = ApplicationService.should_post_to_grist(
+                                    user=user,
+                                    applications=applications,
+                                    counterparty_id=counterparty_id,
+                                    product_list=product_list
+                                )
                                 
-                                # 1. Faol orderlar tekshiruvi
-                                if has_active_orders(user):
-                                    should_post = False
-                                
-                                # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                    should_post = False
-                                
-                                # 3. Denied 30 kundan kam o'tgan tekshiruvi
-                                if has_denied_within_30_days(applications, counterparty_id):
-                                    should_post = False
+                                if not should_post:
+                                    logger.info(f"Application posting blocked (Mode 2 - Success): {reason}", extra={
+                                        'user_id': user.id if user else None,
+                                        'counterparty_id': counterparty_id
+                                    })
                                 
                                 if should_post:
                                     try:
@@ -2331,6 +2353,22 @@ class CalculatePaymentScheduleView(APIView):
                                         product_total = product_price * quantity
                                         contribution = product_total * percentage
                                         minimum_contribution += contribution
+                                
+                                # Issue limit bilan solishtirish
+                                # Barcha productlarning pricelarini qo'shib, keyin issue_limit ni ayirish
+                                issue_limit = latest_app.get('fields', {}).get('issue_limit')
+                                if issue_limit is not None:
+                                    try:
+                                        issue_limit = float(issue_limit)
+                                        
+                                        # Barcha productlarning pricelarini qo'shib, keyin issue_limit ni ayirish
+                                        # original_total_product_sum allaqachon barcha productlarning pricelarini o'z ichiga oladi
+                                        product_sum_minus_issue_limit = original_total_product_sum - issue_limit
+                                        
+                                        # Minimum contribution bilan solishtirish va eng kattasini olish
+                                        minimum_contribution = max(minimum_contribution, product_sum_minus_issue_limit)
+                                    except (ValueError, TypeError):
+                                        pass
                             elif latest_stage == 'Denied by client':
                                 minimum_contribution = 0
                             elif latest_stage in ['Assessment', 'New']:
@@ -2402,24 +2440,19 @@ class CalculatePaymentScheduleView(APIView):
                                             break
                                     
                                     if not found_today_accepted:
-                                        # Tekshiruvlar: post qilishni to'xtatadigan holatlar
-                                        should_post = True
+                                        # Check if should post using ApplicationService
+                                        should_post, reason = ApplicationService.should_post_to_grist(
+                                            user=user,
+                                            applications=applications,
+                                            counterparty_id=counterparty_id,
+                                            product_list=product_list
+                                        )
                                         
-                                        # 1. Faol orderlar tekshiruvi
-                                        if has_active_orders(user):
-                                            should_post = False
-                                        
-                                        # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                        if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                            should_post = False
-                                        
-                                        # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
-                                        if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
-                                            should_post = False
-                                        
-                                        # 4. Denied 30 kundan kam o'tgan tekshiruvi
-                                        if has_denied_within_30_days(applications, counterparty_id):
-                                            should_post = False
+                                        if not should_post:
+                                            logger.info(f"Application posting blocked (Mode 2 - No today accepted): {reason}", extra={
+                                                'user_id': user.id if user else None,
+                                                'counterparty_id': counterparty_id
+                                            })
                                         
                                         if should_post:
                                             try:
@@ -2449,20 +2482,19 @@ class CalculatePaymentScheduleView(APIView):
                                     
                                 if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
                                     if latest_stage == 'Success':
-                                        # Success stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
-                                        should_post = True
+                                        # Check if should post using ApplicationService
+                                        should_post, reason = ApplicationService.should_post_to_grist(
+                                            user=user,
+                                            applications=applications,
+                                            counterparty_id=counterparty_id,
+                                            product_list=product_list
+                                        )
                                         
-                                        # 1. Faol orderlar tekshiruvi
-                                        if has_active_orders(user):
-                                            should_post = False
-                                        
-                                        # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                        if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                            should_post = False
-                                        
-                                        # 3. Denied 30 kundan kam o'tgan tekshiruvi
-                                        if has_denied_within_30_days(applications, counterparty_id):
-                                            should_post = False
+                                        if not should_post:
+                                            logger.info(f"Application posting blocked (Mode 2 - Success stage): {reason}", extra={
+                                                'user_id': user.id if user else None,
+                                                'counterparty_id': counterparty_id
+                                            })
                                         
                                         if should_post:
                                             try:
@@ -2498,24 +2530,19 @@ class CalculatePaymentScheduleView(APIView):
                                 
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
                                 
-                                # Tekshiruvlar: post qilishni to'xtatadigan holatlar
-                                should_post = True
+                                # Check if should post using ApplicationService
+                                should_post, reason = ApplicationService.should_post_to_grist(
+                                    user=user,
+                                    applications=applications,
+                                    counterparty_id=counterparty_id,
+                                    product_list=product_list
+                                )
                                 
-                                # 1. Faol orderlar tekshiruvi
-                                if has_active_orders(user):
-                                    should_post = False
-                                
-                                # 2. Denied by client tekshiruvi (faqat o'sha mahsulotlar uchun)
-                                if has_denied_by_client_for_products(applications, counterparty_id, product_list):
-                                    should_post = False
-                                
-                                # 3. Accepted lekin Order tablega qo'shilmagan tekshiruvi
-                                if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
-                                    should_post = False
-                                
-                                # 4. Denied 30 kundan kam o'tgan tekshiruvi
-                                if has_denied_within_30_days(applications, counterparty_id):
-                                    should_post = False
+                                if not should_post:
+                                    logger.info(f"Application posting blocked (Mode 2 - No application): {reason}", extra={
+                                        'user_id': user.id if user else None,
+                                        'counterparty_id': counterparty_id
+                                    })
                                 
                                 if should_post:
                                     try:
@@ -2595,16 +2622,25 @@ class CalculatePaymentScheduleView(APIView):
                 quantity = item.get('quantity', 1)
                 item_advance_payment = item.get('advance_payment', 0)
                 item_tariff_id = item.get('tariff_id')
+                request_variation_id = item.get('variation_id')  # Request'dan kelgan variation_id
                 
                 try:
                     product = Products.objects.get(id=product_id)
-                    product_id_obj = ProductIDs.objects.filter(product=product).first()
-                    variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
+                    
+                    # Response uchun variation_id: agar request'da variation_id bo'lsa, uni ishlatish, aks holda birinchi topilganini
+                    response_variation_id = None
+                    if request_variation_id:
+                        # Request'dan kelgan variation_id ni ishlatish
+                        response_variation_id = request_variation_id
+                    else:
+                        # Agar variation_id bo'lmasa, birinchi topilganini ishlatish
+                        product_id_obj = ProductIDs.objects.filter(product=product).first()
+                        response_variation_id = product_id_obj.variation_id if product_id_obj and product_id_obj.variation_id else None
                     
                     response_product_list.append({
                         "product_id": product.id,
                         "quantity": quantity,
-                        "variation_id": int(variation_id) if variation_id else None,
+                        "variation_id": int(response_variation_id) if response_variation_id else None,
                         "tariff_id": int(item_tariff_id) if item_tariff_id else None,
                         "advance_payment": float(item_advance_payment)
                     })
@@ -2615,6 +2651,9 @@ class CalculatePaymentScheduleView(APIView):
             total_products_price = original_total_product_sum
         elif calculation_mode == CalculationModes.MODE_2:
             total_products_price = original_total_product_sum
+            
+            # Mode 2 da total_down_payment va minimum_contribution ni faqat tekshiruv uchun
+            # Response'da asl total_down_payment qiymatini qaytarish kerak
         else:
             total_products_price = original_total_product_sum
         

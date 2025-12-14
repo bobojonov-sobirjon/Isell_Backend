@@ -379,9 +379,6 @@ def post_to_grist_application(counterparty_id, date, stage, risk_category_id, is
         "products": formatted_products
     }
     
-    if risk_category_id is not None:
-        fields["risk_category_id"] = risk_category_id
-    
     payload = {
         "records": [
             {
