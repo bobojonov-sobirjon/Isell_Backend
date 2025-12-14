@@ -538,11 +538,11 @@ def get_latest_application_by_counterparty(applications, counterparty_id):
 
 def are_all_today_applications_accepted(applications, counterparty_id):
     """
-    Check if all today's applications for a counterparty_id are "Accepted" or "Success"
-    Returns True if all are Accepted/Success, False otherwise
+    Check if all today's applications for a counterparty_id are "Accepted", "Success", or "Denied by client"
+    Returns True if all are Accepted/Success/Denied by client, False otherwise
     
-    Проверяет, все ли заявки на сегодня для counterparty_id имеют статус "Accepted" или "Success"
-    Возвращает True, если все Accepted/Success, иначе False
+    Проверяет, все ли заявки на сегодня для counterparty_id имеют статус "Accepted", "Success" или "Denied by client"
+    Возвращает True, если все Accepted/Success/Denied by client, иначе False
     """
     if not applications or not counterparty_id:
         return False
@@ -586,7 +586,7 @@ def are_all_today_applications_accepted(applications, counterparty_id):
     
     for app in today_apps:
         stage = app.get('fields', {}).get('stage', '')
-        if stage not in [ApplicationStages.ACCEPTED, ApplicationStages.SUCCESS]:
+        if stage not in [ApplicationStages.ACCEPTED, ApplicationStages.SUCCESS, ApplicationStages.DENIED_BY_CLIENT]:
             return False
     
     return True
@@ -1576,7 +1576,10 @@ class CalculatePaymentScheduleView(APIView):
                         
                         if latest_app:
                             latest_stage = latest_app.get('fields', {}).get('stage', '')
-                            application_status = latest_stage
+                            # "Denied by client" holatida ham yangi application yaratishga ruxsat beriladi (Success kabi)
+                            # Shuning uchun "Denied by client" holatida application_status ni o'rnatmaslik
+                            if latest_stage != ApplicationStages.DENIED_BY_CLIENT:
+                                application_status = latest_stage
                             
                             if latest_stage in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED]:
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
@@ -1659,7 +1662,8 @@ class CalculatePaymentScheduleView(APIView):
                             if latest_stage in [ApplicationStages.NEW, ApplicationStages.ASSESSMENT]:
                                 pass
                             elif latest_stage == ApplicationStages.DENIED_BY_CLIENT:
-                                application_status = ApplicationStages.DENIED_BY_CLIENT
+                                # "Denied by client" holatida ham yangi application yaratishga ruxsat beriladi (Success kabi)
+                                # Shuning uchun application_status ni o'rnatmaslik, post qilish kodini ishlatish uchun
                                 ability_to_order = False
                             elif latest_stage == ApplicationStages.DENIED:
                                 denied_app = latest_app
@@ -1770,8 +1774,8 @@ class CalculatePaymentScheduleView(APIView):
                                             })
                             
                             if application_status not in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED, ApplicationStages.DENIED_BY_CLIENT]:
-                                if latest_stage == ApplicationStages.SUCCESS:
-                                    # Success stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
+                                if latest_stage == ApplicationStages.SUCCESS or latest_stage == ApplicationStages.DENIED_BY_CLIENT:
+                                    # Success yoki Denied by client stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
                                     should_post, reason = ApplicationService.should_post_to_grist(
                                         user=user,
                                         applications=applications,
@@ -1780,7 +1784,7 @@ class CalculatePaymentScheduleView(APIView):
                                     )
                                     
                                     if not should_post:
-                                        logger.info(f"Application posting blocked (Success stage): {reason}", extra={
+                                        logger.info(f"Application posting blocked ({latest_stage} stage): {reason}", extra={
                                             'user_id': user.id if user else None,
                                             'counterparty_id': counterparty_id
                                         })
@@ -1820,6 +1824,10 @@ class CalculatePaymentScheduleView(APIView):
                                                 'user_id': user.id if user else None,
                                                 'counterparty_id': counterparty_id
                                             })
+                            
+                            # "Denied by client" holatida post qilishdan keyin yoki post qilish bo'lmasa, application_status ni o'rnatish
+                            if latest_stage == ApplicationStages.DENIED_BY_CLIENT and application_status not in [ApplicationStages.ACCEPTED, ApplicationStages.NEW]:
+                                application_status = ApplicationStages.DENIED_BY_CLIENT
                                 
                                 if application_status not in [ApplicationStages.ACCEPTED, ApplicationStages.NEW]:
                                     # Check if should post using ApplicationService
@@ -2183,7 +2191,7 @@ class CalculatePaymentScheduleView(APIView):
                         elif today_stage in ['Assessment', 'New']:
                             minimum_contribution = 0
                         
-                        if today_stage in ['Accepted', 'Success'] and are_all_today_applications_accepted(applications, counterparty_id):
+                        if today_stage in ['Accepted', 'Success', 'Denied by client'] and are_all_today_applications_accepted(applications, counterparty_id):
                             if today_stage == 'Accepted':
                                 products_match = compare_application_products_with_request(today_app, product_list)
                                 
@@ -2229,7 +2237,7 @@ class CalculatePaymentScheduleView(APIView):
                                                 application_status = ApplicationStages.NEW
                                         except Exception as e:
                                             pass
-                            elif today_stage == 'Success':
+                            elif today_stage == 'Success' or today_stage == 'Denied by client':
                                 grist_product_ids = get_grist_product_ids_from_request(product_list)
                                 
                                 from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
@@ -2249,7 +2257,7 @@ class CalculatePaymentScheduleView(APIView):
                                 )
                                 
                                 if not should_post:
-                                    logger.info(f"Application posting blocked (Mode 2 - Success): {reason}", extra={
+                                    logger.info(f"Application posting blocked (Mode 2 - {today_stage}): {reason}", extra={
                                         'user_id': user.id if user else None,
                                         'counterparty_id': counterparty_id
                                     })
@@ -2269,14 +2277,23 @@ class CalculatePaymentScheduleView(APIView):
                                             application_status = ApplicationStages.NEW
                                     except Exception as e:
                                         pass
+                                    
+                                    # "Denied by client" holatida post qilishdan keyin yoki post qilish bo'lmasa, application_status ni o'rnatish
+                                    if today_stage == 'Denied by client' and application_status not in ['Accepted', 'New']:
+                                        application_status = 'Denied by client'
                     else:
                         latest_app = get_latest_application_by_counterparty(applications, counterparty_id)
                         
                         if latest_app:
                             latest_stage = latest_app.get('fields', {}).get('stage', '')
-                            application_status = latest_stage
+                            # "Denied by client" holatida ham yangi application yaratishga ruxsat beriladi (Success kabi)
+                            # Shuning uchun "Denied by client" holatida application_status ni o'rnatmaslik
+                            if latest_stage != 'Denied by client':
+                                application_status = latest_stage
+                            else:
+                                application_status = None  # Post qilish kodini ishlatish uchun
                             
-                            should_create_application = latest_stage in ['Accepted', 'Success']
+                            should_create_application = latest_stage in ['Accepted', 'Success', 'Denied by client']
                             
                             if latest_stage in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED]:
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
@@ -2375,7 +2392,8 @@ class CalculatePaymentScheduleView(APIView):
                                 minimum_contribution = 0
                             
                             if latest_stage == 'Denied by client':
-                                application_status = 'Denied by client'
+                                # "Denied by client" holatida ham yangi application yaratishga ruxsat beriladi (Success kabi)
+                                # Shuning uchun application_status ni o'rnatmaslik, post qilish kodini ishlatish uchun
                                 ability_to_order = False
                                 should_create_application = False
                             elif latest_stage == 'Denied':
@@ -2480,8 +2498,8 @@ class CalculatePaymentScheduleView(APIView):
                                             except Exception:
                                                 pass
                                     
-                                if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
-                                    if latest_stage == 'Success':
+                                if application_status != 'Accepted' and application_status != 'Denied':
+                                    if latest_stage == 'Success' or latest_stage == 'Denied by client':
                                         # Check if should post using ApplicationService
                                         should_post, reason = ApplicationService.should_post_to_grist(
                                             user=user,
@@ -2491,7 +2509,7 @@ class CalculatePaymentScheduleView(APIView):
                                         )
                                         
                                         if not should_post:
-                                            logger.info(f"Application posting blocked (Mode 2 - Success stage): {reason}", extra={
+                                            logger.info(f"Application posting blocked (Mode 2 - {latest_stage} stage): {reason}", extra={
                                                 'user_id': user.id if user else None,
                                                 'counterparty_id': counterparty_id
                                             })
@@ -2521,8 +2539,12 @@ class CalculatePaymentScheduleView(APIView):
                                                     application_status = ApplicationStages.NEW
                                             except Exception as e:
                                                 pass
+                                        
+                                        # "Denied by client" holatida post qilishdan keyin yoki post qilish bo'lmasa, application_status ni o'rnatish
+                                        if latest_stage == 'Denied by client' and application_status not in ['Accepted', 'New']:
+                                            application_status = 'Denied by client'
                         else:
-                            if application_status != 'Accepted' and application_status != 'Denied' and application_status != 'Denied by client':
+                            if application_status != 'Accepted' and application_status != 'Denied':
                                 grist_product_ids = get_grist_product_ids_from_request(product_list)
                                 
                                 from apps.v1.order.integrations.advanced_payment_assessment import get_product_ids_from_price_table_by_grist_ids
