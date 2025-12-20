@@ -34,6 +34,7 @@ class CustomUserAdmin(UserAdmin):
         (None, {'fields': ('phone_number', )}),
         ('Личная информация', {'fields': ('first_name', 'last_name', 'date_of_birth', 'avatar', 'address', 'pnfl', 'pass_data', 'is_veriifed_my_id')}),
         ('Адрес', {'fields': ('city', 'street', 'house', 'apartment', 'postal_index')}),
+        ('Гражданство', {'fields': ('citizenship', 'nationality')}),
         ('Права доступа', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
         ('Важные даты', {'fields': ('last_login', 'date_joined', 'created_at', 'updated_at')}),
     )
