@@ -875,6 +875,8 @@ class VerifyMyIDDataView(APIView):
             pinfl = common_data.get("pinfl", "") if isinstance(common_data, dict) else ""
             birth_date_str = common_data.get("birth_date", "") if isinstance(common_data, dict) else ""
             pass_data = doc_data.get("pass_data", "") if isinstance(doc_data, dict) else ""
+            citizenship = common_data.get("citizenship", "") if isinstance(common_data, dict) else ""
+            nationality = common_data.get("nationality", "") if isinstance(common_data, dict) else ""
             
             # Avval permanent_registration dan olish
             address = permanent_registration.get("address", "") if isinstance(permanent_registration, dict) else ""
@@ -1073,6 +1075,10 @@ class VerifyMyIDDataView(APIView):
             user.house = house
         if apartment:
             user.apartment = apartment
+        if citizenship:
+            user.citizenship = citizenship
+        if nationality:
+            user.nationality = nationality
         
         user.is_veriifed_my_id = True
         user.save()
@@ -1121,6 +1127,8 @@ class VerifyMyIDDataView(APIView):
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
         
+        user_serializer = UserSerializer(user)
+        
         return Response(
             {
                 "success": True,
@@ -1129,7 +1137,8 @@ class VerifyMyIDDataView(APIView):
                     "tokens": {
                         "access": access_token,
                         "refresh": refresh_token
-                    }
+                    },
+                    "user": user_serializer.data
                 }
             },
             status=status.HTTP_200_OK

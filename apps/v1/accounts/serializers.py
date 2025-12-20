@@ -45,7 +45,7 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'phone_number', 'first_name', 'last_name', 
             'email', 'date_of_birth', 'avatar', 'address', 'pass_data',
             'city', 'country', 'region', 'street', 'house', 'apartment', 'postal_index',
-            'pnfl', 'is_veriifed_my_id', 'created_at', 'updated_at'
+            'pnfl', 'is_veriifed_my_id', 'citizenship', 'nationality', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'phone_number', 'is_veriifed_my_id', 'created_at', 'updated_at']
 

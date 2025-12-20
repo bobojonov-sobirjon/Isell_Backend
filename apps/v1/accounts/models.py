@@ -120,6 +120,20 @@ class CustomUser(AbstractUser):
         null=True,
         verbose_name="Время истечения токена"
     )
+    citizenship = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Гражданство",
+        help_text="Необязательно. Гражданство пользователя."
+    )
+    nationality = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Национальность",
+        help_text="Необязательно. Национальность пользователя."
+    )
 
     USERNAME_FIELD = 'phone_number'
     REQUIRED_FIELDS = ['email', 'first_name', 'last_name']
