@@ -147,46 +147,24 @@ class PhoneLoginView(APIView):
         code = str(secrets.randbelow(9000) + 1000)
         expires_at = timezone.now() + timedelta(minutes=5)
         
-        print(f"\n{'='*80}")
-        print(f"[PhoneLoginView] DEBUG:")
-        print(f"  📊 phone_number: {phone_number}")
-        print(f"  📊 phone_with_plus: {phone_with_plus}")
-        print(f"  📊 user.id: {user.id}")
-        print(f"  📊 user.phone_number: {user.phone_number}")
-        print(f"  📊 code: {code}")
-        print(f"  📊 expires_at: {expires_at}")
-        
         SmsCode.objects.create(
             user=user,
             code=code,
             expires_at=expires_at
         )
-        
-        print(f"  📊 SmsCode yaratildi")
-        
+
         sms_service = EskizSMSService()
-        print(f"  📊 EskizSMSService yaratildi")
-        print(f"  📊 send_verification_code chaqirilmoqda: phone_number={phone_number}, code={code}")
         
         result = sms_service.send_verification_code(phone_number, code)
-        
-        print(f"  📊 result: {result}")
-        print(f"  📊 result type: {type(result)}")
         
         if isinstance(result, dict):
             sms_sent = result.get('sms_sent', False)
             code_in_response = result.get('code')
             custom_message = result.get('message')
-            print(f"  📊 sms_sent: {sms_sent}")
-            print(f"  📊 code_in_response: {code_in_response}")
-            print(f"  📊 custom_message: {custom_message}")
         else:
             sms_sent = result
             code_in_response = None
             custom_message = None
-            print(f"  📊 sms_sent (not dict): {sms_sent}")
-        
-        print(f"{'='*80}\n")
         
         response_data = {
             "phone_number": phone_number,

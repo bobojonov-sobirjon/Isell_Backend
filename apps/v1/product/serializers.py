@@ -46,8 +46,14 @@ class ProductVariationSerializer(serializers.Serializer):
     def _find_matching_product_ids(self, obj):
         """
         Find the matching ProductIDs for this ProductDetails based on color, storage, and sim.
-        Tries to match variation_name with the combination of color, storage, and sim.
+        First checks if there's a pre-computed mapping in context, otherwise tries to match.
         """
+        # First, check if there's a pre-computed mapping in context
+        detail_to_product_id_map = self.context.get('detail_to_product_id_map')
+        if detail_to_product_id_map and obj.id in detail_to_product_id_map:
+            return detail_to_product_id_map[obj.id]
+        
+        # Fallback to matching logic if no mapping provided
         color = obj.color or ""
         storage = obj.storage or ""
         sim = obj.sim or ""
@@ -215,17 +221,15 @@ class ProductListSerializer(serializers.Serializer):
         return obj.price_category
     
     def get_image(self, obj):
-        product_id = ProductIDs.objects.filter(product=obj).first()
-        has_variation = product_id and (product_id.variation_id or product_id.variation_name)
-        
-        if has_variation:
-            return None
-        
         request = self.context.get('request')
+        
+        # First check if product has a direct image
         if obj.image:
             if request:
                 return request.build_absolute_uri(obj.image.url)
             return obj.image.url
+        
+        # Then check for images in product details (works for both with and without variations)
         first_detail = obj.details.first()
         if first_detail:
             first_image = first_detail.images.first()
@@ -233,6 +237,7 @@ class ProductListSerializer(serializers.Serializer):
                 if request:
                     return request.build_absolute_uri(first_image.image.url)
                 return first_image.image.url
+        
         return None
     
     def get_price(self, obj):
@@ -367,15 +372,19 @@ class ProductListSerializer(serializers.Serializer):
             all_details = list(obj.details.all().prefetch_related('images'))
             
             matched_details = []
+            detail_to_product_id_map = {}  # Mapping from detail.id -> product_id
             for product_id in actual_product_ids:
                 matching_detail = self._find_detail_for_product_id(product_id, all_details)
                 if matching_detail:
                     if not any(d.id == matching_detail.id for d in matched_details):
                         matched_details.append(matching_detail)
+                        # Store the mapping: detail.id -> product_id
+                        detail_to_product_id_map[matching_detail.id] = product_id
             
             filters = self._get_filter_params()
             if filters['color_name'] or filters['storage_name'] or filters['sim_card_name']:
                 filtered_details = []
+                filtered_map = {}
                 for detail in matched_details:
                     if filters['color_name'] and detail.color != filters['color_name']:
                         continue
@@ -384,7 +393,11 @@ class ProductListSerializer(serializers.Serializer):
                     if filters['sim_card_name'] and detail.sim != filters['sim_card_name']:
                         continue
                     filtered_details.append(detail)
+                    # Preserve mapping for filtered details
+                    if detail.id in detail_to_product_id_map:
+                        filtered_map[detail.id] = detail_to_product_id_map[detail.id]
                 matched_details = filtered_details
+                detail_to_product_id_map = filtered_map
             
             details = matched_details
         else:
@@ -392,6 +405,7 @@ class ProductListSerializer(serializers.Serializer):
                 return []
             
             details = self._get_filtered_details(obj)
+            detail_to_product_id_map = {}  # No mapping for non-variation products
         
         min_price = None
         min_price_id = None
@@ -405,6 +419,7 @@ class ProductListSerializer(serializers.Serializer):
         
         context = self.context.copy()
         context['min_price_id'] = min_price_id
+        context['detail_to_product_id_map'] = detail_to_product_id_map
         
         return ProductVariationSerializer(details, many=True, context=context).data
     

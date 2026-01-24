@@ -177,29 +177,39 @@ class ApplicationService:
     def has_denied_within_cooldown(
         applications: List[Dict],
         counterparty_id: int,
+        product_list: List[Dict] = None,
         cooldown_days: int = TimeConstants.DENIED_COOLDOWN_DAYS
     ) -> bool:
         """
-        Check if there's a 'Denied' application within cooldown period.
+        Check if there's a 'Denied' application for specific products within cooldown period.
+        Faqat request'dagi productlar bilan mos keladigan "Denied" application'larni tekshiradi.
         
         Args:
             applications: List of application records from Grist
             counterparty_id: Counterparty ID
+            product_list: List of products from request (optional, if None checks all)
             cooldown_days: Number of days to wait after denial (default: 30)
             
         Returns:
-            bool: True if denied within cooldown period
+            bool: True if denied application exists for these products within cooldown period
         """
         if not applications or not counterparty_id:
             return False
         
         try:
+            from apps.v1.product.views import compare_application_products_with_request
+            
             for app in applications:
                 app_counterparty_id = app.get('fields', {}).get('counterparty_id')
                 app_stage = app.get('fields', {}).get('stage', '')
                 
-                if (app_counterparty_id == counterparty_id and 
-                    app_stage == ApplicationStages.DENIED):
+                if app_counterparty_id == counterparty_id and app_stage == ApplicationStages.DENIED:
+                    # Agar product_list berilgan bo'lsa, faqat o'sha productlar bilan mos keladigan application'larni tekshirish
+                    if product_list:
+                        app_products_match = compare_application_products_with_request(app, product_list)
+                        if not app_products_match:
+                            continue  # Bu application boshqa productlar uchun, o'tkazib yuborish
+                    
                     denied_date = app.get('fields', {}).get('date', 0)
                     
                     if denied_date:
@@ -251,9 +261,9 @@ class ApplicationService:
         ):
             return False, "Accepted application not yet in orders"
         
-        # Check denied within cooldown
-        if ApplicationService.has_denied_within_cooldown(applications, counterparty_id):
-            return False, "Denied within cooldown period"
+        # Check denied within cooldown (faqat request'dagi productlar uchun)
+        if ApplicationService.has_denied_within_cooldown(applications, counterparty_id, product_list):
+            return False, "Denied within cooldown period for these products"
         
         return True, None
 

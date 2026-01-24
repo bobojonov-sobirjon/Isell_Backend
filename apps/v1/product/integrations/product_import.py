@@ -51,8 +51,8 @@ ISell_PROPERTY = os.getenv('ISell_PROPERTY')
 ISell_PROPERTY_VALUE = os.getenv('ISell_PROPERTY_VALUE')
 ISell_PRODUCT_PROPERTY_VALUE = os.getenv('ISell_PRODUCT_PROPERTY_VALUE')
 
-ISell_PRICE_CATEGORY=os.getenv('ISell_PRICE_CATEGORY')
-ISell_PRODUCTS=os.getenv('ISell_PRODUCTS')
+ISell_PRICE_CATEGORY = os.getenv('ISell_PRICE_CATEGORY')
+ISell_PRODUCTS = os.getenv('ISell_PRODUCTS')
 
 def get_url(table_name):
     return f"https://isell.getgrist.com/api/docs/{DOC_ID}/tables/{table_name}/records"
@@ -744,6 +744,189 @@ def save_product_details(processed_variations):
     return details_created, details_skipped, images_created
 
 
+@transaction.atomic
+def import_product_main_images_from_products_table():
+    """
+    ISell_PRODUCTS jadvalidagi picture maydonidan
+    variatsiyasiz tovarlar uchun asosiy rasmni (Products.image)
+    yuklab oladi va saqlaydi.
+    """
+    if not ISell_PRODUCTS:
+        logger.warning("ISell_PRODUCTS environment variable not set")
+        return {
+            "success": False,
+            "message": "ISell_PRODUCTS environment variable not set"
+        }
+
+    try:
+        logger.info("🖼️ ISell_PRODUCTS jadvalidan asosiy rasmlarni olish boshlandi")
+        url = get_url(ISell_PRODUCTS)
+
+        async def fetch():
+            async with aiohttp.ClientSession() as session:
+                data = await fetch_api_data_async(session, url)
+                return data
+
+        data = asyncio.run(fetch())
+
+        if not data:
+            logger.warning("❌ ISell_PRODUCTS API'dan ma'lumotlar olinmadi")
+            return {
+                "success": False,
+                "message": "API'dan ma'lumotlar olinmadi"
+            }
+
+        records = data.get("records", [])
+        if not records:
+            logger.warning("❌ ISell_PRODUCTS jadvalida records topilmadi")
+            return {
+                "success": False,
+                "message": "Products topilmadi"
+            }
+
+        logger.info(f"📦 ISell_PRODUCTS jadvalida {len(records)} ta record topildi")
+
+        # category_id -> category_name mapping yaratish (Isell_PRODUCT_PRICE jadvalidan)
+        category_id_to_name = {}
+        if Isell_PRODUCT_PRICE:
+            try:
+                price_url = get_url(Isell_PRODUCT_PRICE)
+                async def fetch_price():
+                    async with aiohttp.ClientSession() as session:
+                        return await fetch_api_data_async(session, price_url)
+                price_data = asyncio.run(fetch_price())
+                if price_data:
+                    price_records = price_data.get("records", [])
+                    for price_record in price_records:
+                        price_fields = price_record.get("fields", {})
+                        cat_id = price_fields.get("category_id")
+                        cat_name = (price_fields.get("category_name") or "").strip()
+                        if cat_id and cat_name:
+                            category_id_to_name[cat_id] = cat_name
+            except Exception as e:
+                logger.warning(f"⚠️ Error fetching category mapping: {str(e)}")
+
+        updated_count = 0
+        skipped_count = 0
+        skipped_reasons = {
+            "no_product_name_or_category": 0,
+            "no_picture_ids": 0,
+            "no_category": 0,
+            "product_not_found": 0,
+            "has_variations": 0,
+            "already_has_image": 0,
+            "image_download_failed": 0
+        }
+
+        for record in records:
+            fields = record.get("fields", {})
+            
+            # ISell_PRODUCTS jadvalida: name, category_id, picture, with_variations
+            product_name = (fields.get("name") or "").strip()
+            category_id = fields.get("category_id")
+            picture = fields.get("picture", [])
+            with_variations = fields.get("with_variations", False)
+
+            # Majburiy ma'lumotlar bo'lmasa o'tkazib yuboramiz
+            if not product_name:
+                skipped_count += 1
+                skipped_reasons["no_product_name_or_category"] += 1
+                continue
+
+            picture_ids = extract_picture_ids(picture)
+            
+            if not picture_ids:
+                skipped_count += 1
+                skipped_reasons["no_picture_ids"] += 1
+                continue
+
+            # category_id orqali kategoriyani topish (cache dan)
+            category_name = None
+            if category_id:
+                category_name = category_id_to_name.get(category_id)
+
+            # Agar category_name topilmasa, barcha productlarni nom bo'yicha qidirish
+            if not category_name:
+                # Nom bo'yicha qidirish (category ni hisobga olmasdan)
+                product = Products.objects.filter(name=product_name).first()
+            else:
+                # Lokal kategoriyani topamiz / yaratamiz
+                category = get_or_create_category(category_name)
+                if not category:
+                    skipped_count += 1
+                    skipped_reasons["no_category"] += 1
+                    continue
+                
+                # Shu nom ва категория бўйича Products ни топамиз
+                product = Products.objects.filter(
+                    name=product_name,
+                    category=category
+                ).first()
+
+            if not product:
+                skipped_count += 1
+                skipped_reasons["product_not_found"] += 1
+                continue
+
+            # with_variations maydoni va ProductIDs orqali tekshirish
+            # Agar with_variations=True bo'lsa yoki ProductIDs da variation_name bor bo'lsa, skip qilamiz
+            has_variations = with_variations or ProductIDs.objects.filter(
+                product=product,
+                variation_name__isnull=False
+            ).exclude(variation_name="").exists()
+
+            if has_variations:
+                skipped_count += 1
+                skipped_reasons["has_variations"] += 1
+                continue
+
+            # Агар allaqachon asosiy rasm bo'lsa, o'tkazib yuboramiz
+            if product.image:
+                skipped_count += 1
+                skipped_reasons["already_has_image"] += 1
+                continue
+
+            # Faqat birinchi rasmdan foydalanamiz
+            first_picture_id = picture_ids[0]
+            image_content = download_attachment_image(first_picture_id)
+
+            if not image_content:
+                skipped_count += 1
+                skipped_reasons["image_download_failed"] += 1
+                continue
+
+            file_name = f"product_{product.id}_img_{first_picture_id}.jpg"
+            product.image.save(
+                file_name,
+                ContentFile(image_content),
+                save=True
+            )
+            updated_count += 1
+
+        logger.info(f"✅ Asosiy rasmlar import qilindi: Updated={updated_count}, Skipped={skipped_count}")
+        if skipped_count > 0:
+            logger.info(f"📊 Skipped reasons:")
+            for reason, count in skipped_reasons.items():
+                if count > 0:
+                    logger.info(f"   - {reason}: {count}")
+
+        return {
+            "success": True,
+            "message": "Asosiy rasmlar muvaffaqiyatli import qilindi",
+            "updated": updated_count,
+            "skipped": skipped_count,
+            "skipped_reasons": skipped_reasons,
+            "total_processed": updated_count + skipped_count
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error in import_product_main_images_from_products_table: {str(e)}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"Error: {str(e)}"
+        }
+
+
 def import_product_details():
     try:
         variations_records = get_product_variations()
@@ -1137,6 +1320,7 @@ def import_all_products():
     """
     results = {
         "products": None,
+        "product_main_images": None,
         "product_details": None,
         "product_properties": None,
         "product_characteristics": None,
@@ -1155,6 +1339,14 @@ def import_all_products():
         
         price_categories_result = import_product_price_categories()
         results["price_categories"] = price_categories_result
+
+        # Variatsiyasiz tovarlar uchun asosiy rasmlarni ISell_PRODUCTS dan olish
+        logger.info("🖼️ Asosiy rasmlarni ISell_PRODUCTS jadvalidan olish boshlandi...")
+        main_images_result = import_product_main_images_from_products_table()
+        results["product_main_images"] = main_images_result
+        if main_images_result:
+            logger.info(f"📊 Asosiy rasmlar natijasi: {main_images_result.get('message', 'N/A')}")
+            logger.info(f"   Updated: {main_images_result.get('updated', 0)}, Skipped: {main_images_result.get('skipped', 0)}")
         
         details_result = import_product_details()
         results["product_details"] = details_result

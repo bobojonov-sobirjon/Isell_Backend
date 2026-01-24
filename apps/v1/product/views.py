@@ -1247,9 +1247,10 @@ def has_accepted_but_not_in_orders(user, applications, counterparty_id, product_
     except Exception:
         return False
 
-def has_denied_within_30_days(applications, counterparty_id):
+def has_denied_within_30_days(applications, counterparty_id, product_list=None):
     """
     'Denied' stage bor va 30 kundan kam o'tganligini tekshiradi.
+    Faqat request'dagi productlar bilan mos keladigan "Denied" application'larni tekshiradi.
     """
     if not applications or not counterparty_id:
         return False
@@ -1262,6 +1263,12 @@ def has_denied_within_30_days(applications, counterparty_id):
             app_stage = app.get('fields', {}).get('stage', '')
             
             if app_counterparty_id == counterparty_id and app_stage == 'Denied':
+                # Agar product_list berilgan bo'lsa, faqat o'sha productlar bilan mos keladigan application'larni tekshirish
+                if product_list:
+                    app_products_match = compare_application_products_with_request(app, product_list)
+                    if not app_products_match:
+                        continue  # Bu application boshqa productlar uchun, o'tkazib yuborish
+                
                 denied_date = app.get('fields', {}).get('date', 0)
                 
                 if denied_date:
@@ -1578,8 +1585,11 @@ class CalculatePaymentScheduleView(APIView):
                             latest_stage = latest_app.get('fields', {}).get('stage', '')
                             # "Denied by client" holatida ham yangi application yaratishga ruxsat beriladi (Success kabi)
                             # Shuning uchun "Denied by client" holatida application_status ni o'rnatmaslik
+                            # "Denied" holatida ham cooldown period o'tgan bo'lsa, application_status ni o'rnatmaslik
                             if latest_stage != ApplicationStages.DENIED_BY_CLIENT:
-                                application_status = latest_stage
+                                # "Denied" holatida cooldown period tekshiruvi keyinroq qilinadi
+                                if latest_stage != ApplicationStages.DENIED:
+                                    application_status = latest_stage
                             
                             if latest_stage in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED]:
                                 risk_category_id = get_risk_category_id_from_applications(applications, counterparty_id)
@@ -1666,20 +1676,32 @@ class CalculatePaymentScheduleView(APIView):
                                 # Shuning uchun application_status ni o'rnatmaslik, post qilish kodini ishlatish uchun
                                 ability_to_order = False
                             elif latest_stage == ApplicationStages.DENIED:
-                                denied_app = latest_app
-                                denied_date = denied_app.get('fields', {}).get('date', 0)
+                                # Faqat request'dagi productlar bilan mos keladigan "Denied" application'larni tekshirish
+                                app_products_match = compare_application_products_with_request(latest_app, product_list)
                                 
-                                if denied_date:
-                                    denied_datetime = datetime.fromtimestamp(denied_date)
-                                    current_datetime = datetime.now()
-                                    days_passed = (current_datetime - denied_datetime).days
+                                if app_products_match:
+                                    # Agar bu application request'dagi productlar bilan mos kelsa, Denied holatini tekshirish
+                                    denied_app = latest_app
+                                    denied_date = denied_app.get('fields', {}).get('date', 0)
                                     
-                                    if days_passed < TimeConstants.DENIED_COOLDOWN_DAYS:
+                                    if denied_date:
+                                        denied_datetime = datetime.fromtimestamp(denied_date)
+                                        current_datetime = datetime.now()
+                                        days_passed = (current_datetime - denied_datetime).days
+                                        
+                                        if days_passed < TimeConstants.DENIED_COOLDOWN_DAYS:
+                                            # Hali cooldown period ichida, Denied holatini o'rnatish
+                                            application_status = ApplicationStages.DENIED
+                                            ability_to_order = False
+                                        # Agar days_passed >= DENIED_COOLDOWN_DAYS bo'lsa, application_status ni o'rnatmaslik
+                                        # va post qilish kodini ishlatish uchun (cooldown period o'tgan)
+                                        # Bu holatda application_status None bo'lib qoladi va keyinroq post qilish kodini ishlatish mumkin
+                                    else:
+                                        # Date bo'lmasa, Denied holatini o'rnatish
                                         application_status = ApplicationStages.DENIED
                                         ability_to_order = False
-                                else:
-                                    application_status = ApplicationStages.DENIED
-                                    ability_to_order = False
+                                # Agar bu application boshqa productlar uchun bo'lsa, application_status ni o'rnatmaslik
+                                # va post qilish kodini ishlatish uchun
                             elif latest_stage == ApplicationStages.ACCEPTED:
                                 from django.utils import timezone
                                 import pytz
@@ -1774,8 +1796,12 @@ class CalculatePaymentScheduleView(APIView):
                                             })
                             
                             if application_status not in [ApplicationStages.ACCEPTED, ApplicationStages.DENIED, ApplicationStages.DENIED_BY_CLIENT]:
-                                if latest_stage == ApplicationStages.SUCCESS or latest_stage == ApplicationStages.DENIED_BY_CLIENT:
-                                    # Success yoki Denied by client stage kelganda post qilish mumkin (faqat tekshiruvlar bilan)
+                                # Success, Denied by client yoki Denied (cooldown period o'tgan) stage kelganda post qilish mumkin
+                                # Denied holatida ham cooldown period o'tgan bo'lsa (application_status None bo'lsa), post qilish mumkin
+                                if (latest_stage == ApplicationStages.SUCCESS or 
+                                    latest_stage == ApplicationStages.DENIED_BY_CLIENT or
+                                    latest_stage == ApplicationStages.DENIED):
+                                    # Denied holatida ham cooldown period o'tgan bo'lsa (application_status None), post qilish mumkin
                                     should_post, reason = ApplicationService.should_post_to_grist(
                                         user=user,
                                         applications=applications,
@@ -1892,8 +1918,8 @@ class CalculatePaymentScheduleView(APIView):
                             if has_accepted_but_not_in_orders(user, applications, counterparty_id, product_list):
                                 should_post = False
                             
-                            # 4. Denied 30 kundan kam o'tgan tekshiruvi
-                            if has_denied_within_30_days(applications, counterparty_id):
+                            # 4. Denied 30 kundan kam o'tgan tekshiruvi (faqat request'dagi productlar uchun)
+                            if has_denied_within_30_days(applications, counterparty_id, product_list):
                                 should_post = False
                             
                             if should_post:
